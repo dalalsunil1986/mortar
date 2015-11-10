@@ -1,12 +1,16 @@
 'use strict';
 
-var _slicedToArray = (function () { function sliceIterator(arr, i) { var _arr = []; var _n = true; var _d = false; var _e = undefined; try { for (var _i = arr[Symbol.iterator](), _s; !(_n = (_s = _i.next()).done); _n = true) { _arr.push(_s.value); if (i && _arr.length === i) break; } } catch (err) { _d = true; _e = err; } finally { try { if (!_n && _i["return"]) _i["return"](); } finally { if (_d) throw _e; } } return _arr; } return function (arr, i) { if (Array.isArray(arr)) { return arr; } else if (Symbol.iterator in Object(arr)) { return sliceIterator(arr, i); } else { throw new TypeError("Invalid attempt to destructure non-iterable instance"); } }; })();
-
 var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
 
-function _toConsumableArray(arr) { if (Array.isArray(arr)) { for (var i = 0, arr2 = Array(arr.length); i < arr.length; i++) arr2[i] = arr[i]; return arr2; } else { return Array.from(arr); } }
+var _slicedToArray = (function () { function sliceIterator(arr, i) { var _arr = []; var _n = true; var _d = false; var _e = undefined; try { for (var _i = arr[Symbol.iterator](), _s; !(_n = (_s = _i.next()).done); _n = true) { _arr.push(_s.value); if (i && _arr.length === i) break; } } catch (err) { _d = true; _e = err; } finally { try { if (!_n && _i["return"]) _i["return"](); } finally { if (_d) throw _e; } } return _arr; } return function (arr, i) { if (Array.isArray(arr)) { return arr; } else if (Symbol.iterator in Object(arr)) { return sliceIterator(arr, i); } else { throw new TypeError("Invalid attempt to destructure non-iterable instance"); } }; })();
+
+Object.defineProperty(exports, "__esModule", {
+	value: true
+});
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+
+function _toConsumableArray(arr) { if (Array.isArray(arr)) { for (var i = 0, arr2 = Array(arr.length); i < arr.length; i++) arr2[i] = arr[i]; return arr2; } else { return Array.from(arr); } }
 
 // This regex detects the arguments portion of a function definition
 // Thanks to Angular for the regex
@@ -14,17 +18,15 @@ function _classCallCheck(instance, Constructor) { if (!(instance instanceof Cons
 var FN_ARGS = /^function\s*[^\(]*\(\s*([^\)]*)\)/m;
 
 var Context = (function () {
-	function Context() {
-		var parent = arguments.length <= 0 || arguments[0] === undefined ? undefined : arguments[0];
-
+	function Context(parent) {
 		_classCallCheck(this, Context);
 
 		if (!Context.isContext(this)) {
 			return Context.create(parent);
 		}
-		this._cache = new Map();
 		this.parent = parent;
-		this.providers = {};
+		this._cache = new Map();
+		this.providers = new Map();
 		var _iteratorNormalCompletion = true;
 		var _didIteratorError = false;
 		var _iteratorError = undefined;
@@ -36,7 +38,7 @@ var Context = (function () {
 				var name = _step$value[0];
 				var create = _step$value[1];
 
-				this.providers[name] = create(this);
+				this.providers.set(name, create(this));
 			}
 		} catch (err) {
 			_didIteratorError = true;
@@ -65,20 +67,19 @@ var Context = (function () {
 			var _iteratorError2 = undefined;
 
 			try {
-				var _loop = function _loop() {
+				for (var _iterator2 = this.providers[Symbol.iterator](), _step2; !(_iteratorNormalCompletion2 = (_step2 = _iterator2.next()).done); _iteratorNormalCompletion2 = true) {
 					var _step2$value = _slicedToArray(_step2.value, 2);
 
 					var name = _step2$value[0];
 					var configure = _step2$value[1];
 
-					as[name] = function (key) {
-						//todo throw error if already registered
-						_this._cache.set(key, configure(subject));
-					};
-				};
-
-				for (var _iterator2 = this.providers[Symbol.iterator](), _step2; !(_iteratorNormalCompletion2 = (_step2 = _iterator2.next()).done); _iteratorNormalCompletion2 = true) {
-					_loop();
+					as[name] = (function (configure) {
+						return function (key) {
+							//todo throw error if already registered
+							_this._cache.set(key, configure(subject));
+							return _this;
+						};
+					})(configure);
 				}
 			} catch (err) {
 				_didIteratorError2 = true;
@@ -116,6 +117,7 @@ var Context = (function () {
 			var context = this;
 			return {
 				resolve: function resolve(subject) {
+					//todo: handle if subject is not a function
 					if (Context.isContext(contextOrMap)) {
 						return contextOrMap.resolve(subject);
 					}
@@ -152,7 +154,8 @@ var Context = (function () {
 	}], [{
 		key: 'getDependencies',
 		value: function getDependencies(subject) {
-			return Function.toString.call(subject).match(FN_ARGS)[1].split(',').map(function (i) {
+			//todo: throw error if it's not a function
+			return Function.prototype.toString.call(subject).match(FN_ARGS)[1].split(',').map(function (i) {
 				return i.trim();
 			}).filter(function (i) {
 				return i;
@@ -174,10 +177,10 @@ var Context = (function () {
 		key: 'register',
 		value: function register(provider) {
 			if (!Context.providers) {
-				Context.providers = {};
+				Context.providers = new Map();
 			}
 			//todo: error if it's already registered?
-			Context.providers[provider.name] = provider.create;
+			Context.providers.set(provider.name, provider.create);
 			return Context;
 		}
 	}]);
@@ -185,15 +188,17 @@ var Context = (function () {
 	return Context;
 })();
 
+exports.default = Context;
+
 Context.register({
 	name: 'singleton',
 	create: function create(context) {
 		return function (factory) {
 			//todo: check subject is function
+			var instance = undefined;
 			return {
-				instance: null,
 				provide: function provide() {
-					return typeof undefined.instance !== 'undefined' ? undefined.instance : undefined.instance = context.resolve(factory);
+					return instance = typeof instance !== 'undefined' ? instance : context.resolve(factory);
 				}
 			};
 		};
@@ -217,5 +222,3 @@ Context.register({
 		};
 	}
 });
-
-module.exports = Context;

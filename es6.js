@@ -3,26 +3,29 @@
 
 const FN_ARGS = /^function\s*[^\(]*\(\s*([^\)]*)\)/m;
 
-class Context {
-	constructor(parent = undefined) {
+export default class Context {
+	constructor(parent) {
 		if (!Context.isContext(this)) {
 			return Context.create(parent);
 		}
-		this._cache = new Map();
 		this.parent = parent;
-		this.providers = {};
+		this._cache = new Map();
+		this.providers = new Map();
 		for (let [name, create] of Context.providers) {
-			this.providers[name] = create(this);
+			this.providers.set(name, create(this));
 		}
 	}
 
 	wire(subject) {
 		let as = {};
 		for (let [name, configure] of this.providers) {
-			as[name] = key => {
-				//todo throw error if already registered
-				this._cache.set(key, configure(subject));
-			};
+			as[name] = (configure => {
+				return key => {
+					//todo throw error if already registered
+					this._cache.set(key, configure(subject));
+					return this;
+				};
+			})(configure);
 		}
 		return {as: as};
 	}
@@ -39,6 +42,7 @@ class Context {
 		const context = this;
 		return {
 			resolve: function(subject) {
+				//todo: handle if subject is not a function
 				if (Context.isContext(contextOrMap)) {
 					return contextOrMap.resolve(subject);
 				}
@@ -71,7 +75,8 @@ class Context {
 	}
 
 	static getDependencies(subject) {
-		return Function.toString.call(subject)
+		//todo: throw error if it's not a function
+		return Function.prototype.toString.call(subject)
 			.match(FN_ARGS)[1]
 			.split(',')
 			.map(function(i) {
@@ -92,10 +97,10 @@ class Context {
 
 	static register(provider) {
 		if (!Context.providers) {
-			Context.providers = {};
+			Context.providers = new Map();
 		}
 		//todo: error if it's already registered?
-		Context.providers[provider.name] = provider.create;
+		Context.providers.set(provider.name, provider.create);
 		return Context;
 	}
 }
@@ -106,12 +111,12 @@ Context
 		create: context => {
 			return factory => {
 				//todo: check subject is function
+				let instance;
 				return {
-					instance: null,
-					provide : () => {
-						return (typeof this.instance !== 'undefined')
-							? this.instance
-							: this.instance = context.resolve(factory);
+					provide: () => {
+						return instance = (typeof instance !== 'undefined')
+							? instance
+							: context.resolve(factory);
 					}
 				};
 			};
@@ -134,4 +139,3 @@ Context
 		}
 	});
 
-module.exports = Context;
