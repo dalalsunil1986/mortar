@@ -4,7 +4,7 @@
   "description": "",
   "main": "es6.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "mocha test",
     "lint": "eslint es6.js",
     "build": "babel es6.js -o es5.js"
   },
@@ -13,7 +13,9 @@
   "devDependencies": {
     "babel-cli": "^6.1.2",
     "babel-preset-es2015": "^6.1.2",
-    "eslint": "^1.9.0"
+    "eslint": "^1.9.0",
+    "mocha": "^2.3.3",
+    "must": "^0.13.1"
   },
   "babel": {
     "presets": [
