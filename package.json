@@ -1,5 +1,5 @@
 {
-  "name": "mortar",
+  "name": "trowel",
   "version": "0.0.0",
   "description": "",
   "main": "es6.js",
@@ -19,5 +19,20 @@
     "presets": [
       "es2015"
     ]
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/keystonejs/trowel"
+  },
+  "keywords": [
+    "di",
+    "dependency injection",
+    "dependencies",
+    "inversion of control",
+    "keystone"
+  ],
+  "bugs": {
+    "url": "https://github.com/keystonejs/trowel/issues"
+  },
+  "homepage": "https://github.com/keystonejs/trowel"
 }
