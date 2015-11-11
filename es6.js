@@ -46,8 +46,8 @@ export default class Context {
 				if (Context.isContext(contextOrMap)) {
 					return contextOrMap.resolve(subject);
 				}
-				var dependencies = Context.getDependencies(subject);
-				var resolved = dependencies.map(dependency => {
+				const dependencies = Context.getDependencies(subject);
+				const resolved = dependencies.map(dependency => {
 					var value = contextOrMap[dependency];
 					if (typeof value === 'undefined') {
 						value = context.retrieve(dependency);
@@ -62,7 +62,10 @@ export default class Context {
 
 	retrieve(key) {
 		//todo: not found errror
-		const config = this._cache.get(key);
+		let config = this._cache.get(key);
+		if (!config && this.parent) {
+			return this.parent.retrieve(key);
+		}
 		return config.provide();
 	}
 
