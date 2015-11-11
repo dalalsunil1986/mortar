@@ -5,9 +5,6 @@ const FN_ARGS = /^function\s*[^\(]*\(\s*([^\)]*)\)/m;
 
 export default class Context {
 	constructor(parent) {
-		if (!Context.isContext(this)) {
-			return Context.create(parent);
-		}
 		this.parent = parent;
 		this._cache = new Map();
 		this.providers = new Map();

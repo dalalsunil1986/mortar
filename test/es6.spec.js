@@ -10,6 +10,15 @@ describe('trowel (ES6)', () => {
 		it('should be a function', () => {
 			expect(subject).to.be.a.function();
 		});
+		it('should be instantiatable', ()=> {
+			const instance = new subject();
+			expect(subject.isContext(instance)).to.be.true();
+		});
+		it('should throw an error when called directly', ()=> {
+			expect(() => {
+				const instance = subject();
+			}).to.throw(/cannot call/i);
+		});
 	});
 	describe('Context', ()=> {
 		describe('.providers', ()=> {
@@ -26,19 +35,37 @@ describe('trowel (ES6)', () => {
 				expect(subject.providers.has('value')).to.be.true();
 			});
 		});
-		describe('.getDependencies', ()=> {
+		describe('.create()', () => {
+			it('should create a Context instance', ()=> {
+				const instance = subject.create();
+				expect(subject.isContext(instance)).to.be.true();
+			});
+		});
+		describe('.getDependencies()', ()=> {
 			it('should return all the dependencies of a function', ()=> {
 				const f = (foo, baz, qux)=> {
 				};
 				expect(subject.getDependencies(f)).to.eql(['foo', 'baz', 'qux']);
 			});
 		});
-		describe('instances', ()=> {
-			it('should be of type Context', ()=> {
-				const instance = new subject();
-				expect(subject.isContext(instance)).to.be.true();
+		describe('.register()', ()=> {
+			it('should register a provider', ()=> {
+				subject.register({
+					name  : 'constant',
+					create: () => {
+						return () => {
+							return {provide: () => 42};
+						};
+					}
+				});
+				const instance = subject.create();
+				instance.wire(NOOP).as.constant('constant');
+				const value = instance.retrieve('constant');
+				expect(value).to.equal(42);
 			});
-			describe('#wire', ()=> {
+		});
+		describe('instances', ()=> {
+			describe('#wire()', ()=> {
 				it('should allow registration of a function as a singleton', ()=> {
 					const instance = new subject();
 					instance.wire(NOOP).as.singleton('singleton');
@@ -55,7 +82,7 @@ describe('trowel (ES6)', () => {
 					expect(instance.has('value')).to.be.true();
 				});
 			});
-			describe('#resolve', ()=> {
+			describe('#resolve()', ()=> {
 				it('should resolve a function\'s dependencies', ()=> {
 					const instance = new subject();
 					instance.wire('foo').as.value('foo');
@@ -68,7 +95,7 @@ describe('trowel (ES6)', () => {
 					expect(actual).to.eql(['foo', 'baz', 'qux']);
 				});
 			});
-			describe('#retrieve', ()=> {
+			describe('#retrieve()', ()=> {
 				it('should return the same instance for singletons', ()=> {
 					const instance = new subject();
 					instance.wire(() => ({})).as.singleton('singleton');
@@ -83,6 +110,46 @@ describe('trowel (ES6)', () => {
 					var actual1 = instance.retrieve('producer');
 					var actual2 = instance.retrieve('producer');
 					expect(actual1).to.not.equal(actual2);
+				});
+				it('should retrieve the upstream value when none is wired downstream', ()=> {
+					const instance = new subject();
+					const child = instance.spawn();
+					instance.wire(42).as.value('the answer to life, the universe and everything ');
+					expect(child.retrieve('the answer to life, the universe and everything ')).to.equal(42);
+				});
+				it('should retrieve the downstream value when overriding the upstream one', ()=> {
+					const instance = new subject();
+					const child = instance.spawn();
+					instance.wire(0).as.value('the answer to life, the universe and everything ');
+					child.wire(42).as.value('the answer to life, the universe and everything ');
+					expect(child.retrieve('the answer to life, the universe and everything ')).to.equal(42);
+				});
+				it('should not retrieve the downstream value when the upstream one is requested', ()=> {
+					const instance = new subject();
+					const child = instance.spawn();
+					instance.wire(0).as.value('the answer to life, the universe and everything ');
+					child.wire(42).as.value('the answer to life, the universe and everything ');
+					expect(instance.retrieve('the answer to life, the universe and everything ')).to.equal(0);
+				});
+			});
+			describe('#using', ()=> {
+				it('should allow overriding dependencies when resolving', ()=> {
+					const instance = new subject();
+					instance.wire(NOOP).as.singleton('foo');
+					instance.wire('baz').as.value('baz');
+					const [foo, baz] = instance.using({
+						foo: 42
+					}).resolve((foo, baz) => [foo, baz]);
+					expect(foo).to.equal(42);
+					expect(baz).to.equal('baz');
+				});
+			});
+			describe('#spawn()', ()=> {
+				it('should create a child context', ()=> {
+					const instance = new subject();
+					const child = instance.spawn();
+					expect(subject.isContext(child)).to.be.true();
+					expect(child.parent).to.equal(instance);
 				});
 			});
 		});
