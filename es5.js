@@ -2,28 +2,30 @@
 
 var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
 
-var _slicedToArray = (function () { function sliceIterator(arr, i) { var _arr = []; var _n = true; var _d = false; var _e = undefined; try { for (var _i = arr[Symbol.iterator](), _s; !(_n = (_s = _i.next()).done); _n = true) { _arr.push(_s.value); if (i && _arr.length === i) break; } } catch (err) { _d = true; _e = err; } finally { try { if (!_n && _i["return"]) _i["return"](); } finally { if (_d) throw _e; } } return _arr; } return function (arr, i) { if (Array.isArray(arr)) { return arr; } else if (Symbol.iterator in Object(arr)) { return sliceIterator(arr, i); } else { throw new TypeError("Invalid attempt to destructure non-iterable instance"); } }; })();
+var _slicedToArray = (function () { function sliceIterator(arr, i) { var _arr = []; var _n = true; var _d = false; var _e = undefined; try { for (var _i = arr[Symbol.iterator](), _s; !(_n = (_s = _i.next()).done); _n = true) { _arr.push(_s.value); if (i && _arr.length === i) break; } } catch (err) { _d = true; _e = err; } finally { try { if (!_n && _i["return"]) _i["return"](); } finally { if (_d) throw _e; } } return _arr; } return function (arr, i) { if (Array.isArray(arr)) { return arr; } else if (Symbol.iterator in Object(arr)) { return sliceIterator(arr, i); } else { throw new TypeError("Invalid attempt to destructure non-iterable instance"); } }; })(); // This regex detects the arguments portion of a function definition
+// Thanks to Angular for the regex
 
 Object.defineProperty(exports, "__esModule", {
 	value: true
 });
 
+var _lodash = require('lodash');
+
+var _lodash2 = _interopRequireDefault(_lodash);
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
 function _toConsumableArray(arr) { if (Array.isArray(arr)) { for (var i = 0, arr2 = Array(arr.length); i < arr.length; i++) arr2[i] = arr[i]; return arr2; } else { return Array.from(arr); } }
 
-// This regex detects the arguments portion of a function definition
-// Thanks to Angular for the regex
-
 var FN_ARGS = /^function\s*[^\(]*\(\s*([^\)]*)\)/m;
+var ERROR_PREFIX = '[Trowel]';
 
 var Context = (function () {
 	function Context(parent) {
 		_classCallCheck(this, Context);
 
-		if (!Context.isContext(this)) {
-			return Context.create(parent);
-		}
 		this.parent = parent;
 		this._cache = new Map();
 		this.providers = new Map();
@@ -67,7 +69,7 @@ var Context = (function () {
 			var _iteratorError2 = undefined;
 
 			try {
-				for (var _iterator2 = this.providers[Symbol.iterator](), _step2; !(_iteratorNormalCompletion2 = (_step2 = _iterator2.next()).done); _iteratorNormalCompletion2 = true) {
+				var _loop = function _loop() {
 					var _step2$value = _slicedToArray(_step2.value, 2);
 
 					var name = _step2$value[0];
@@ -75,11 +77,22 @@ var Context = (function () {
 
 					as[name] = (function (configure) {
 						return function (key) {
-							//todo throw error if already registered
+							if (typeof subject === 'undefined') {
+								throw new Error(ERROR_PREFIX + ' Cannot wire \'undefined\' as a ' + name);
+							}
+							if (_this.has(key)) {
+								throw new Error(ERROR_PREFIX + ' Wiring already exists for key \'' + key + '\'');
+							} else if (!_lodash2.default.isString(key) || key === '') {
+								throw new Error(ERROR_PREFIX + ' Cannot use ' + key + ' as a key for wiring');
+							}
 							_this._cache.set(key, configure(subject));
 							return _this;
 						};
 					})(configure);
+				};
+
+				for (var _iterator2 = this.providers[Symbol.iterator](), _step2; !(_iteratorNormalCompletion2 = (_step2 = _iterator2.next()).done); _iteratorNormalCompletion2 = true) {
+					_loop();
 				}
 			} catch (err) {
 				_didIteratorError2 = true;
@@ -99,47 +112,69 @@ var Context = (function () {
 			return { as: as };
 		}
 	}, {
+		key: 'release',
+		value: function release(key) {
+			this._cache.delete(key);
+		}
+	}, {
 		key: 'resolve',
 		value: function resolve(subject) {
-			var _this2 = this;
-
-			//todo: check subject's a function
-			var dependencies = Context.getDependencies(subject);
-			//todo: throw error if not found
-			var resolved = dependencies.map(function (dependency) {
-				return _this2.retrieve(dependency);
-			});
-			return subject.apply(undefined, _toConsumableArray(resolved));
+			return this.using(this.parent || {}).resolve(subject);
 		}
 	}, {
 		key: 'using',
 		value: function using(contextOrMap) {
 			var context = this;
+			if (_lodash2.default.isArray(contextOrMap) || !_lodash2.default.isObject(contextOrMap) && !Context.isContext(contextOrMap)) {
+				throw new Error(ERROR_PREFIX + ' Cannot use anything else but an object or Context \n\t\t\t\tto override dependency resolutions');
+			} else if (_lodash2.default.isFunction(contextOrMap)) {
+				contextOrMap = this.resolve(contextOrMap);
+			}
 			return {
 				resolve: function resolve(subject) {
-					//todo: handle if subject is not a function
-					if (Context.isContext(contextOrMap)) {
-						return contextOrMap.resolve(subject);
+					if (!_lodash2.default.isFunction(subject)) {
+						throw new Error('{ERROR_PREFIX} Cannot resolve anything else but a function');
 					}
 					var dependencies = Context.getDependencies(subject);
-					var resolved = dependencies.map(function (dependency) {
-						var value = contextOrMap[dependency];
-						if (typeof value === 'undefined') {
-							value = context.retrieve(dependency);
-						}
-						//todo: throw error if not found
-						return value;
-					});
+					var resolved = undefined;
+					if (Context.isContext(contextOrMap)) {
+						resolved = dependencies.map(function (dependency) {
+							return contextOrMap._retrieveWithFallback(dependency, context);
+						});
+					} else {
+						resolved = dependencies.map(function (dependency) {
+							var value = contextOrMap[dependency];
+							if (typeof value === 'undefined') {
+								value = context.retrieve(dependency);
+							}
+							return value;
+						});
+					}
 					return subject.apply(undefined, _toConsumableArray(resolved));
 				}
 			};
 		}
 	}, {
+		key: '_retrieveWithFallback',
+		value: function _retrieveWithFallback(key, fallback) {
+			var config = this._cache.get(key);
+			var value = undefined;
+			if (!config) {
+				if (fallback) {
+					value = fallback.retrieve(key);
+				}
+			} else {
+				value = config.provide();
+			}
+			if (typeof value === 'undefined') {
+				throw new Error(ERROR_PREFIX + ' wiring not found for key \'' + key + '\'');
+			}
+			return value;
+		}
+	}, {
 		key: 'retrieve',
 		value: function retrieve(key) {
-			//todo: not found errror
-			var config = this._cache.get(key);
-			return config.provide();
+			return this._retrieveWithFallback(key, this.parent);
 		}
 	}, {
 		key: 'has',
@@ -178,8 +213,9 @@ var Context = (function () {
 		value: function register(provider) {
 			if (!Context.providers) {
 				Context.providers = new Map();
+			} else if (Context.providers.has(provider.name)) {
+				throw new Error(ERROR_PREFIX + ' provider already registered for \'\'' + provider.name);
 			}
-			//todo: error if it's already registered?
 			Context.providers.set(provider.name, provider.create);
 			return Context;
 		}

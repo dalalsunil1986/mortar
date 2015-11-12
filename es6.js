@@ -1,7 +1,10 @@
 // This regex detects the arguments portion of a function definition
 // Thanks to Angular for the regex
 
+import _ from 'lodash';
+
 const FN_ARGS = /^function\s*[^\(]*\(\s*([^\)]*)\)/m;
+const ERROR_PREFIX = '[Trowel]';
 
 export default class Context {
 	constructor(parent) {
@@ -18,7 +21,14 @@ export default class Context {
 		for (let [name, configure] of this.providers) {
 			as[name] = (configure => {
 				return key => {
-					//todo throw error if already registered
+					if (typeof subject === 'undefined') {
+						throw new Error(`${ERROR_PREFIX} Cannot wire 'undefined' as a ${name}`);
+					}
+					if (this.has(key)) {
+						throw new Error(`${ERROR_PREFIX} Wiring already exists for key '${key}'`);
+					} else if (!_.isString(key) || key === '') {
+						throw new Error(`${ERROR_PREFIX} Cannot use ${key} as a key for wiring`);
+					}
 					this._cache.set(key, configure(subject));
 					return this;
 				};
@@ -27,43 +37,65 @@ export default class Context {
 		return {as: as};
 	}
 
+	release(key) {
+		this._cache.delete(key);
+	}
+
 	resolve(subject) {
-		//todo: check subject's a function
-		const dependencies = Context.getDependencies(subject);
-		//todo: throw error if not found
-		const resolved = dependencies.map(dependency => this.retrieve(dependency));
-		return subject(...resolved);
+		return this.using(this.parent || {}).resolve(subject);
 	}
 
 	using(contextOrMap) {
 		const context = this;
+		if (_.isArray(contextOrMap) || (!_.isObject(contextOrMap) && !Context.isContext(contextOrMap))) {
+			throw new Error(`${ERROR_PREFIX} Cannot use anything else but an object or Context 
+				to override dependency resolutions`);
+		} else if (_.isFunction(contextOrMap)) {
+			contextOrMap = this.resolve(contextOrMap);
+		}
 		return {
 			resolve: function(subject) {
-				//todo: handle if subject is not a function
-				if (Context.isContext(contextOrMap)) {
-					return contextOrMap.resolve(subject);
+				if (!_.isFunction(subject)) {
+					throw new Error(`{ERROR_PREFIX} Cannot resolve anything else but a function`);
 				}
 				const dependencies = Context.getDependencies(subject);
-				const resolved = dependencies.map(dependency => {
-					var value = contextOrMap[dependency];
-					if (typeof value === 'undefined') {
-						value = context.retrieve(dependency);
-					}
-					//todo: throw error if not found
-					return value;
-				});
+				let resolved;
+				if (Context.isContext(contextOrMap)) {
+					resolved = dependencies.map(dependency => {
+						return contextOrMap._retrieveWithFallback(dependency, context);
+					});
+				} else {
+					resolved = dependencies.map(dependency => {
+						let value = contextOrMap[dependency];
+						if (typeof value === 'undefined') {
+							value = context.retrieve(dependency);
+						}
+						return value;
+					});
+				}
 				return subject(...resolved);
 			}
 		};
 	}
 
-	retrieve(key) {
-		//todo: not found errror
+	_retrieveWithFallback(key, fallback) {
 		let config = this._cache.get(key);
-		if (!config && this.parent) {
-			return this.parent.retrieve(key);
+		let value;
+		if (!config) {
+			if (fallback) {
+				value = fallback.retrieve(key);
+			}
+		} else {
+			value = config.provide();
 		}
-		return config.provide();
+		if (typeof value === 'undefined') {
+			throw new Error(`${ERROR_PREFIX} wiring not found for key '${key}'`);
+		}
+		return value;
+	}
+
+	retrieve(key) {
+		return this._retrieveWithFallback(key, this.parent);
 	}
 
 	has(key) {
@@ -98,8 +130,9 @@ export default class Context {
 	static register(provider) {
 		if (!Context.providers) {
 			Context.providers = new Map();
+		} else if (Context.providers.has(provider.name)) {
+			throw new Error(`${ERROR_PREFIX} provider already registered for ''${provider.name}`);
 		}
-		//todo: error if it's already registered?
 		Context.providers.set(provider.name, provider.create);
 		return Context;
 	}

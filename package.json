@@ -12,6 +12,7 @@
   "license": "MIT",
   "devDependencies": {
     "babel-cli": "^6.1.2",
+    "babel-eslint": "^4.1.5",
     "babel-preset-es2015": "^6.1.2",
     "eslint": "^1.9.0",
     "mocha": "^2.3.3",
@@ -36,5 +37,8 @@
   "bugs": {
     "url": "https://github.com/keystonejs/trowel/issues"
   },
-  "homepage": "https://github.com/keystonejs/trowel"
+  "homepage": "https://github.com/keystonejs/trowel",
+  "dependencies": {
+    "lodash": "^3.10.1"
+  }
 }
