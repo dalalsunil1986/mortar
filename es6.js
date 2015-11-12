@@ -49,7 +49,7 @@ export default class Context {
 		if (_.isArray(contextOrMap) || (!_.isObject(contextOrMap) && !Context.isContext(contextOrMap))) {
 			throw new Error(`${ERROR_PREFIX} Cannot use anything else but an object or Context 
 				to override dependency resolutions`);
-		} else if (_.isFunction(contextOrMap)) {
+		} else if (_.isFunction(contextOrMap)) { //functions are objects too, i.e. won't branch into "if"
 			contextOrMap = this.resolve(contextOrMap);
 		}
 		return {
@@ -106,7 +106,9 @@ export default class Context {
 	}
 
 	static getDependencies(subject) {
-		//todo: throw error if it's not a function
+		if (!_.isFunction(subject)) {
+			throw new Error(`${ERROR_PREFIX} cannot retrieve dependencies of anything else but a function`);
+		}
 		return Function.prototype.toString.call(subject)
 			.match(FN_ARGS)[1]
 			.split(',')

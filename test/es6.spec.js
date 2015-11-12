@@ -48,6 +48,15 @@ describe('trowel (ES6)', () => {
 				};
 				expect(subject.getDependencies(f)).to.eql(['foo', 'baz', 'qux']);
 			});
+			it('should throw for anything else but a function', ()=> {
+				FALSY_VALUES
+					.concat({}, [], 0, undefined)
+					.forEach(falsy=> {
+						expect(()=> {
+							subject.getDependencies(falsy);
+						}).to.throw(/function/);
+					});
+			});
 		});
 		describe('.register()', ()=> {
 			it('should register a provider', ()=> {
@@ -159,10 +168,10 @@ describe('trowel (ES6)', () => {
 							}).to.throw(/function/i);
 						});
 				});
-				it('should simply call a function without dependencies', ()=>{
+				it('should simply call a function without dependencies', ()=> {
 					let called = false;
-					instance.resolve(()=>{
-						called=true;
+					instance.resolve(()=> {
+						called = true;
 					});
 					expect(called).to.be.true();
 				});
@@ -274,13 +283,13 @@ describe('trowel (ES6)', () => {
 					const actual = instance.using((baz)=>({foo: baz})).resolve((foo)=>foo);
 					expect(actual).to.equal('baz');
 				});
-				it('should allow using a different context for overriding dependencies', ()=>{
+				it('should allow using a different context for overriding dependencies', ()=> {
 					const context = new subject();
 					context.wire('foo').as.value('foo');
 					const actual = instance.using(context).resolve((foo)=>foo);
 					expect(actual).to.equal('foo');
 				});
-				it('should fallback to the current context when using a different context for overriding dependencies', ()=>{
+				it('should fallback to the current context when using a different context for overriding dependencies', ()=> {
 					const context = new subject();
 					context.wire('foo').as.value('foo');
 					instance.wire('baz').as.value('baz');
