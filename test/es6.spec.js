@@ -191,18 +191,18 @@ describe('trowel (ES6)', () => {
 					expect(actual1).to.not.equal(actual2);
 				});
 				it('should retrieve the upstream value when none is wired downstream', ()=> {
-					const child = instance.spawn();
+					const child = instance.spawn().spawn().spawn();
 					instance.wire(42).as.value('the answer to life, the universe and everything ');
 					expect(child.retrieve('the answer to life, the universe and everything ')).to.equal(42);
 				});
 				it('should retrieve the downstream value when overriding the upstream one', ()=> {
-					const child = instance.spawn();
+					const child = instance.spawn().spawn().spawn();
 					instance.wire(0).as.value('the answer to life, the universe and everything ');
 					child.wire(42).as.value('the answer to life, the universe and everything ');
 					expect(child.retrieve('the answer to life, the universe and everything ')).to.equal(42);
 				});
 				it('should not retrieve the downstream value when the upstream one is requested', ()=> {
-					const child = instance.spawn();
+					const child = instance.spawn().spawn().spawn();
 					instance.wire(0).as.value('the answer to life, the universe and everything ');
 					child.wire(42).as.value('the answer to life, the universe and everything ');
 					expect(instance.retrieve('the answer to life, the universe and everything ')).to.equal(0);
