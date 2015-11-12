@@ -1,8 +1,7 @@
-// This regex detects the arguments portion of a function definition
-// Thanks to Angular for the regex
-
 import _ from 'lodash';
 
+// This regex detects the arguments portion of a function definition
+// Thanks to Angular for the regex
 const FN_ARGS = /^function\s*[^\(]*\(\s*([^\)]*)\)/m;
 const ERROR_PREFIX = '[Trowel]';
 
@@ -19,7 +18,7 @@ export default class Context {
 	wire(subject) {
 		let as = {};
 		for (let [name, configure] of this.providers) {
-			as[name] = (configure => {
+			as[name] = ((configure, name) => {
 				return key => {
 					if (typeof subject === 'undefined') {
 						throw new Error(`${ERROR_PREFIX} Cannot wire 'undefined' as a ${name}`);
@@ -32,7 +31,7 @@ export default class Context {
 					this._cache.set(key, configure(subject));
 					return this;
 				};
-			})(configure);
+			})(configure, name);
 		}
 		return {as: as};
 	}
