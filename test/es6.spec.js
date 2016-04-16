@@ -54,19 +54,30 @@ describe('trowel (ES6)', () => {
 					.forEach(falsy=> {
 						expect(()=> {
 							subject.getDependencies(falsy);
-						}).to.throw(/function/);
+						}).to.throw(/function/i);
 					});
 			});
 		});
 		describe('.register()', ()=> {
-			it('should register a provider', ()=> {
+			it('should register a provider object', ()=> {
 				subject.register({
-					name  : 'constant',
+					name  : 'answerToLifeTheUniverseAndEverything',
 					create: () => {
-						return () => {
-							return {provide: () => 42};
+						return function return42() {
+							return 42
 						};
 					}
+				});
+				const instance = subject.create();
+				instance.wire(NOOP).as.answerToLifeTheUniverseAndEverything('constant');
+				const value = instance.retrieve('constant');
+				expect(value).to.equal(42);
+			});
+			it('should register a named function', ()=> {
+				subject.register(function constant() {
+					return function return42() {
+						return 42
+					};
 				});
 				const instance = subject.create();
 				instance.wire(NOOP).as.constant('constant');
@@ -127,6 +138,25 @@ describe('trowel (ES6)', () => {
 								instance.wire(NOOP).as.value(invalid);
 							}).to.throw(/cannot use/i);
 						});
+				});
+			});
+			describe('#require()', ()=> {
+				let instance;
+				it('should throw if no `module` was provided', ()=> {
+					instance = new subject();
+					expect(()=> instance.require('./fixtures/foo')).to.throw(/module/i);
+				});
+				it('should require the file and allow wiring it up as a singleton producer', ()=> {
+					instance = new subject(module);
+					instance.require('./fixtures/foo').as.singleton('foo');
+					const value = instance.retrieve('foo'); 
+					expect(instance.retrieve('foo')).to.equal(value);
+				});
+				it('should require the file and allow wiring it up as a producer', ()=> {
+					instance = new subject(module);
+					instance.require('./fixtures/foo').as.producer('foo');
+					const value = instance.retrieve('foo'); 
+					expect(instance.retrieve('foo')).to.not.equal(value);
 				});
 			});
 			describe('#resolve()', ()=> {
@@ -192,6 +222,14 @@ describe('trowel (ES6)', () => {
 					var actual2 = instance.retrieve('singleton');
 					expect(actual1).to.not.be.undefined();
 					expect(actual1).to.equal(actual2);
+				});
+				it('should separate singleton instances for different keys', ()=> {
+					const factory = () => ({}); 
+					instance.wire(factory).as.singleton('s1');
+					instance.wire(factory).as.singleton('s2');
+					var actual1 = instance.retrieve('s1');
+					var actual2 = instance.retrieve('s2');
+					expect(actual1).to.not.equal(actual2);
 				});
 				it('should return a new instance for producers', ()=> {
 					instance.wire(() => ({})).as.producer('producer');

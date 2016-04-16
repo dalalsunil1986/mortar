@@ -39,6 +39,7 @@
   },
   "homepage": "https://github.com/keystonejs/trowel",
   "dependencies": {
+    "is-class": "^0.0.4",
     "lodash": "^3.10.1"
   }
 }

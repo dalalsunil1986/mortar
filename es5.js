@@ -2,8 +2,7 @@
 
 var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
 
-var _slicedToArray = (function () { function sliceIterator(arr, i) { var _arr = []; var _n = true; var _d = false; var _e = undefined; try { for (var _i = arr[Symbol.iterator](), _s; !(_n = (_s = _i.next()).done); _n = true) { _arr.push(_s.value); if (i && _arr.length === i) break; } } catch (err) { _d = true; _e = err; } finally { try { if (!_n && _i["return"]) _i["return"](); } finally { if (_d) throw _e; } } return _arr; } return function (arr, i) { if (Array.isArray(arr)) { return arr; } else if (Symbol.iterator in Object(arr)) { return sliceIterator(arr, i); } else { throw new TypeError("Invalid attempt to destructure non-iterable instance"); } }; })(); // This regex detects the arguments portion of a function definition
-// Thanks to Angular for the regex
+var _slicedToArray = (function () { function sliceIterator(arr, i) { var _arr = []; var _n = true; var _d = false; var _e = undefined; try { for (var _i = arr[Symbol.iterator](), _s; !(_n = (_s = _i.next()).done); _n = true) { _arr.push(_s.value); if (i && _arr.length === i) break; } } catch (err) { _d = true; _e = err; } finally { try { if (!_n && _i["return"]) _i["return"](); } finally { if (_d) throw _e; } } return _arr; } return function (arr, i) { if (Array.isArray(arr)) { return arr; } else if (Symbol.iterator in Object(arr)) { return sliceIterator(arr, i); } else { throw new TypeError("Invalid attempt to destructure non-iterable instance"); } }; })();
 
 Object.defineProperty(exports, "__esModule", {
 	value: true
@@ -19,13 +18,20 @@ function _classCallCheck(instance, Constructor) { if (!(instance instanceof Cons
 
 function _toConsumableArray(arr) { if (Array.isArray(arr)) { for (var i = 0, arr2 = Array(arr.length); i < arr.length; i++) arr2[i] = arr[i]; return arr2; } else { return Array.from(arr); } }
 
+// This regex detects the arguments portion of a function definition
+// Thanks to Angular for the regex
 var FN_ARGS = /^function\s*[^\(]*\(\s*([^\)]*)\)/m;
 var ERROR_PREFIX = '[Trowel]';
 
 var Context = (function () {
-	function Context(parent) {
+	function Context(module, parent) {
 		_classCallCheck(this, Context);
 
+		if (!parent && module instanceof Context) {
+			parent = module;
+			module = parent.module;
+		}
+		this.module = module;
 		this.parent = parent;
 		this._cache = new Map();
 		this.providers = new Map();
@@ -69,13 +75,13 @@ var Context = (function () {
 			var _iteratorError2 = undefined;
 
 			try {
-				var _loop = function _loop() {
+				for (var _iterator2 = this.providers[Symbol.iterator](), _step2; !(_iteratorNormalCompletion2 = (_step2 = _iterator2.next()).done); _iteratorNormalCompletion2 = true) {
 					var _step2$value = _slicedToArray(_step2.value, 2);
 
 					var name = _step2$value[0];
-					var configure = _step2$value[1];
+					var provide = _step2$value[1];
 
-					as[name] = (function (configure) {
+					as[name] = (function (provide, name) {
 						return function (key) {
 							if (typeof subject === 'undefined') {
 								throw new Error(ERROR_PREFIX + ' Cannot wire \'undefined\' as a ' + name);
@@ -85,14 +91,10 @@ var Context = (function () {
 							} else if (!_lodash2.default.isString(key) || key === '') {
 								throw new Error(ERROR_PREFIX + ' Cannot use ' + key + ' as a key for wiring');
 							}
-							_this._cache.set(key, configure(subject));
+							_this._cache.set(key, { provide: provide, subject: subject });
 							return _this;
 						};
-					})(configure);
-				};
-
-				for (var _iterator2 = this.providers[Symbol.iterator](), _step2; !(_iteratorNormalCompletion2 = (_step2 = _iterator2.next()).done); _iteratorNormalCompletion2 = true) {
-					_loop();
+					})(provide, name);
 				}
 			} catch (err) {
 				_didIteratorError2 = true;
@@ -112,6 +114,20 @@ var Context = (function () {
 			return { as: as };
 		}
 	}, {
+		key: 'require',
+		value: function require(id) {
+			var _this2 = this;
+
+			if (!this.module) {
+				throw new Error(ERROR_PREFIX + ' Cannot require without providing a module to the constructor');
+			}
+			var wrapped = function wrapped() {
+				return _this2.module.require(id);
+			};
+			wrapped.__mortar_wrapped = true;
+			return this.wire(wrapped);
+		}
+	}, {
 		key: 'release',
 		value: function release(key) {
 			this._cache.delete(key);
@@ -128,6 +144,7 @@ var Context = (function () {
 			if (_lodash2.default.isArray(contextOrMap) || !_lodash2.default.isObject(contextOrMap) && !Context.isContext(contextOrMap)) {
 				throw new Error(ERROR_PREFIX + ' Cannot use anything else but an object or Context \n\t\t\t\tto override dependency resolutions');
 			} else if (_lodash2.default.isFunction(contextOrMap)) {
+				//functions are objects too, i.e. won't branch into "if"
 				contextOrMap = this.resolve(contextOrMap);
 			}
 			return {
@@ -164,7 +181,10 @@ var Context = (function () {
 					value = fallback.retrieve(key);
 				}
 			} else {
-				value = config.provide();
+				if (_lodash2.default.get(config.subject, "__mortar_wrapped", false)) {
+					config.subject = config.subject();
+				}
+				value = config.provide(config.subject);
 			}
 			if (typeof value === 'undefined') {
 				throw new Error(ERROR_PREFIX + ' wiring not found for key \'' + key + '\'');
@@ -189,7 +209,9 @@ var Context = (function () {
 	}], [{
 		key: 'getDependencies',
 		value: function getDependencies(subject) {
-			//todo: throw error if it's not a function
+			if (!_lodash2.default.isFunction(subject)) {
+				throw new Error(ERROR_PREFIX + ' cannot retrieve dependencies of anything else but a function');
+			}
 			return Function.prototype.toString.call(subject).match(FN_ARGS)[1].split(',').map(function (i) {
 				return i.trim();
 			}).filter(function (i) {
@@ -214,9 +236,9 @@ var Context = (function () {
 			if (!Context.providers) {
 				Context.providers = new Map();
 			} else if (Context.providers.has(provider.name)) {
-				throw new Error(ERROR_PREFIX + ' provider already registered for \'\'' + provider.name);
+				throw new Error(ERROR_PREFIX + ' provider already registered for \'' + provider.name + '\'');
 			}
-			Context.providers.set(provider.name, provider.create);
+			Context.providers.set(provider.name, provider.create || provider);
 			return Context;
 		}
 	}]);
@@ -226,35 +248,19 @@ var Context = (function () {
 
 exports.default = Context;
 
-Context.register({
-	name: 'singleton',
-	create: function create(context) {
-		return function (factory) {
-			//todo: check subject is function
-			var instance = undefined;
-			return {
-				provide: function provide() {
-					return instance = typeof instance !== 'undefined' ? instance : context.resolve(factory);
-				}
-			};
-		};
-	}
-}).register({
-	name: 'value',
-	create: function create() {
-		return function (value) {
-			return { provide: function provide() {
-					return value;
-				} };
-		};
-	}
-}).register({
-	name: 'producer',
-	create: function create(context) {
-		return function (factory) {
-			return { provide: function provide() {
-					return context.resolve(factory);
-				} };
-		};
-	}
+Context.register(function singleton(context) {
+	return function getOrCreateInstance(factory) {
+		if (typeof this.instance === 'undefined') {
+			this.instance = context.resolve(factory);
+		}
+		return this.instance;
+	};
+}).register(function value() /*context*/{
+	return function (value) {
+		return value;
+	};
+}).register(function producer(context) {
+	return function (factory) {
+		return context.resolve(factory);
+	};
 });

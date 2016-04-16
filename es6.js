@@ -1,4 +1,5 @@
 import _ from 'lodash';
+import isClass from 'is-class';
 
 // This regex detects the arguments portion of a function definition
 // Thanks to Angular for the regex
@@ -6,7 +7,12 @@ const FN_ARGS = /^function\s*[^\(]*\(\s*([^\)]*)\)/m;
 const ERROR_PREFIX = '[Trowel]';
 
 export default class Context {
-	constructor(parent) {
+	constructor(module, parent) {
+		if (!parent && module instanceof Context) {
+			parent = module;
+			module = parent.module;
+		}
+		this.module = module;
 		this.parent = parent;
 		this._cache = new Map();
 		this.providers = new Map();
@@ -17,9 +23,9 @@ export default class Context {
 
 	wire(subject) {
 		let as = {};
-		for (let [name, configure] of this.providers) {
-			as[name] = ((configure, name) => {
-				return key => {
+		for (let [name, provide] of this.providers) {
+			as[name] = ((provide, name) => {
+				return (key) => {
 					if (typeof subject === 'undefined') {
 						throw new Error(`${ERROR_PREFIX} Cannot wire 'undefined' as a ${name}`);
 					}
@@ -28,12 +34,23 @@ export default class Context {
 					} else if (!_.isString(key) || key === '') {
 						throw new Error(`${ERROR_PREFIX} Cannot use ${key} as a key for wiring`);
 					}
-					this._cache.set(key, configure(subject));
+					this._cache.set(key, {subject: subject, provide: provide});
 					return this;
 				};
-			})(configure, name);
+			})(provide, name);
 		}
 		return {as: as};
+	}
+
+	require(id) {
+		if (!this.module) {
+			throw new Error(`${ERROR_PREFIX} Cannot require without providing a module to the constructor`);
+		}
+		const wrapped = ()=> {
+			return this.module.require(id);
+		};
+		wrapped.__mortar_wrapped = true;
+		return this.wire(wrapped);
 	}
 
 	release(key) {
@@ -60,11 +77,11 @@ export default class Context {
 				const dependencies = Context.getDependencies(subject);
 				let resolved;
 				if (Context.isContext(contextOrMap)) {
-					resolved = dependencies.map(dependency => {
+					resolved = dependencies.map((dependency) => {
 						return contextOrMap._retrieveWithFallback(dependency, context);
 					});
 				} else {
-					resolved = dependencies.map(dependency => {
+					resolved = dependencies.map((dependency) => {
 						let value = contextOrMap[dependency];
 						if (typeof value === 'undefined') {
 							value = context.retrieve(dependency);
@@ -72,7 +89,7 @@ export default class Context {
 						return value;
 					});
 				}
-				return subject(...resolved);
+				return (isClass(subject)) ? new subject(...resolved) : subject(...resolved);
 			}
 		};
 	}
@@ -85,7 +102,10 @@ export default class Context {
 				value = fallback.retrieve(key);
 			}
 		} else {
-			value = config.provide();
+			if (_.get(config.subject, "__mortar_wrapped", false)) {
+				config.subject = config.subject();
+			}
+			value = config.provide(config.subject);
 		}
 		if (typeof value === 'undefined') {
 			throw new Error(`${ERROR_PREFIX} wiring not found for key '${key}'`);
@@ -112,12 +132,8 @@ export default class Context {
 		return Function.prototype.toString.call(subject)
 			.match(FN_ARGS)[1]
 			.split(',')
-			.map(function(i) {
-				return i.trim();
-			})
-			.filter(function(i) {
-				return i;
-			});
+			.map((i) => i.trim())
+			.filter((i)=>i);
 	}
 
 	static create(parent = undefined) {
@@ -132,44 +148,26 @@ export default class Context {
 		if (!Context.providers) {
 			Context.providers = new Map();
 		} else if (Context.providers.has(provider.name)) {
-			throw new Error(`${ERROR_PREFIX} provider already registered for ''${provider.name}`);
+			throw new Error(`${ERROR_PREFIX} provider already registered for '${provider.name}'`);
 		}
-		Context.providers.set(provider.name, provider.create);
+		Context.providers.set(provider.name, provider.create || provider);
 		return Context;
 	}
 }
 
 Context
-	.register({
-		name  : 'singleton',
-		create: context => {
-			return factory => {
-				//todo: check subject is function
-				let instance;
-				return {
-					provide: () => {
-						return instance = (typeof instance !== 'undefined')
-							? instance
-							: context.resolve(factory);
-					}
-				};
-			};
-		}
+	.register(function singleton(context) {
+		return function getOrCreateInstance(factory) {
+			if (typeof this.instance === 'undefined') {
+				this.instance = context.resolve(factory);
+			}
+			return this.instance;
+		};
 	})
-	.register({
-		name  : 'value',
-		create: () => {
-			return value => {
-				return {provide: () => value};
-			};
-		}
+	.register(function value(/*context*/) {
+		return (value) => value;
 	})
-	.register({
-		name  : 'producer',
-		create: context => {
-			return factory => {
-				return {provide: () => context.resolve(factory)};
-			};
-		}
-	});
-
+	.register(function producer(context) {
+		return (factory) => context.resolve(factory);
+	})
+;
