@@ -102,7 +102,7 @@ export default class Context {
 				value = fallback.retrieve(key);
 			}
 		} else {
-			if (_.get(config.subject, "__mortar_wrapped", false)) {
+			if (_.get(config.subject, '__mortar_wrapped', false)) {
 				config.subject = config.subject();
 			}
 			value = config.provide(config.subject);
