@@ -51,7 +51,6 @@
   "homepage": "https://github.com/keystonejs/mortar",
   "dependencies": {
     "is-class": "^0.0.4",
-    "istanbul": "^1.0.0-alpha.2",
     "lodash": "^3.10.1"
   }
 }
