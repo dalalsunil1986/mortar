@@ -6,9 +6,11 @@
   "scripts": {
     "test": "mocha test --bail",
     "lint": "eslint es6.js test",
+    "travis": "npm run lint && npm test",
     "test-cov": "babel-node ./node_modules/istanbul/lib/cli.js cover _mocha -- ./test",
     "build": "babel es6.js -o es5.js",
-    "docs": "esdoc -c esdoc.json -R README.md"
+    "docs": "esdoc -c esdoc.json -R README.md",
+    "gh-pages": "grunt gh-pages"
   },
   "author": "Camille Reynders",
   "license": "MIT",
@@ -19,6 +21,9 @@
     "coveralls": "^2.11.9",
     "esdoc": "^0.4.6",
     "eslint": "^1.9.0",
+    "grunt": "^1.0.1",
+    "grunt-cli": "^1.2.0",
+    "grunt-gh-pages": "^1.1.0",
     "istanbul": "^0.4.3",
     "mocha": "^2.3.3",
     "must": "^0.13.1"
