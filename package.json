@@ -2,13 +2,13 @@
   "name": "mortar",
   "version": "0.0.0",
   "description": "",
-  "main": "es6.js",
+  "main": "src/mortar.js",
   "scripts": {
     "test": "mocha test --bail",
     "lint": "eslint es6.js test",
     "travis": "npm run lint && npm test",
     "test-cov": "babel-node ./node_modules/istanbul/lib/cli.js cover _mocha -- ./test",
-    "build": "babel es6.js -o es5.js",
+    "build": "babel src -o es5.js",
     "docs": "esdoc -c esdoc.json -R README.md",
     "gh-pages": "grunt gh-pages"
   },
