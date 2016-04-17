@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <base data-ice="baseUrl" href="../../">
+  <title data-ice="title">test/mortar.spec.js | API Document</title>
+  <link type="text/css" rel="stylesheet" href="css/style.css">
+  <link type="text/css" rel="stylesheet" href="css/prettify-tomorrow.css">
+  <script src="script/prettify/prettify.js"></script>
+  
+  
+  <script src="script/manual.js"></script>
+</head>
+<body class="layout-container" data-ice="rootContainer">
+
+<header>
+  <a href="./">Home</a>
+  
+  <a href="identifiers.html">Reference</a>
+  <a href="source.html">Source</a>
+  <a href="test.html" data-ice="testLink">Test</a>
+  <a data-ice="repoURL" href="https://github.com/keystonejs/mortar" class="repo-url-github">Repository</a>
+  <div class="search-box">
+  <span>
+    <img src="./image/search.png">
+    <span class="search-input-edge"></span><input class="search-input"><span class="search-input-edge"></span>
+  </span>
+    <ul class="search-result"></ul>
+  </div>
+</header>
+
+<nav class="navigation" data-ice="nav"><div>
+  <ul>
+    
+  <li data-ice="doc"><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/src/mortar.js~Context.html">Context</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-function">F</span><span data-ice="name"><span><a href="function/index.html#static-function-isContext">isContext</a></span></span></li>
+</ul>
+</div>
+</nav>
+
+<div class="content" data-ice="content"><h1 data-ice="title">test/mortar.spec.js</h1>
+<pre class="source-code line-number raw-source-code"><code class="prettyprint linenums" data-ice="content">&apos;use strict&apos;;
+import expect from &apos;must&apos;;
+import isClass from &apos;is-class&apos;;
+import subject, {isContext} from &apos;../src/mortar.js&apos;;
+
+const NOOP = ()=&gt; {
+};
+const FALSY_VALUES = [false, 0, &apos;&apos;, null];
+
+describe(&apos;{mortar}&apos;, () =&gt; {
+	describe(&apos;module&apos;, () =&gt; {
+		it(&apos;should be a class&apos;, () =&gt; {
+			expect(isClass(subject)).to.be.true();
+		});
+		it(&apos;should be instantiatable&apos;, ()=&gt; {
+			const instance = new subject();
+			expect(isContext(instance)).to.be.true();
+		});
+		it(&apos;should throw an error when called directly&apos;, ()=&gt; {
+			expect(() =&gt; {
+				const instance = subject();
+			}).to.throw(/cannot call/i);
+		});
+	});
+	describe(&apos;Context&apos;, ()=&gt; {
+		/**
+		 * @test {Context.providers}
+		 */
+		describe(&apos;.providers&apos;, ()=&gt; {
+			it(&apos;should be an object&apos;, ()=&gt; {
+				expect(subject.providers).to.be.an.object();
+			});
+			it(&apos;should register a `singleton` provider&apos;, ()=&gt; {
+				expect(subject.providers.has(&apos;singleton&apos;)).to.be.true();
+			});
+			it(&apos;should register a `producer` provider&apos;, ()=&gt; {
+				expect(subject.providers.has(&apos;producer&apos;)).to.be.true();
+			});
+			it(&apos;should register a `value` provider&apos;, ()=&gt; {
+				expect(subject.providers.has(&apos;value&apos;)).to.be.true();
+			});
+		});
+		/**
+		 * @test {Context.create}
+		 */
+		describe(&apos;.create()&apos;, () =&gt; {
+			it(&apos;should create a Context instance&apos;, ()=&gt; {
+				const instance = subject.create();
+				expect(isContext(instance)).to.be.true();
+			});
+		});
+		/**
+		 * @test {Context.getDependencies}
+		 */
+		describe(&apos;.getDependencies()&apos;, ()=&gt; {
+			it(&apos;should return all the dependencies of a function&apos;, ()=&gt; {
+				const f = (foo, baz, qux)=&gt; {
+				};
+				expect(subject.getDependencies(f)).to.eql([&apos;foo&apos;, &apos;baz&apos;, &apos;qux&apos;]);
+			});
+			it(&apos;should throw for anything else but a function&apos;, ()=&gt; {
+				FALSY_VALUES
+					.concat({}, [], 0, undefined)
+					.forEach(falsy=&gt; {
+						expect(()=&gt; {
+							subject.getDependencies(falsy);
+						}).to.throw(/function/i);
+					});
+			});
+		});
+		/**
+		 * @test {Context.register}
+		 */
+		describe(&apos;.register()&apos;, ()=&gt; {
+			it(&apos;should register a provider object&apos;, ()=&gt; {
+				subject.register({
+					name     : &apos;answerToLifeTheUniverseAndEverything&apos;,
+					configure: () =&gt; {
+						return function return42() {
+							return 42
+						};
+					}
+				});
+				const instance = subject.create();
+				instance.wire(NOOP).as.answerToLifeTheUniverseAndEverything(&apos;constant&apos;);
+				const value = instance.retrieve(&apos;constant&apos;);
+				expect(value).to.equal(42);
+			});
+			it(&apos;should register a named function&apos;, ()=&gt; {
+				subject.register(function constant() {
+					return function return42() {
+						return 42
+					};
+				});
+				const instance = subject.create();
+				instance.wire(NOOP).as.constant(&apos;constant&apos;);
+				const value = instance.retrieve(&apos;constant&apos;);
+				expect(value).to.equal(42);
+			});
+			it(&apos;should throw an error when trying to re-register&apos;, ()=&gt; {
+				expect(()=&gt; {
+					subject.register({
+						name  : &apos;singleton&apos;,
+						create: ()=&gt; {
+						}
+					});
+				}).to.throw(/already registered/i);
+			});
+		});
+		/**
+		 * @test {Context#wire}
+		 */
+		describe(&apos;#wire()&apos;, ()=&gt; {
+			let instance;
+			beforeEach(()=&gt; {
+				instance = new subject();
+			});
+			it(&apos;should throw an error when `subject` is `undefined`&apos;, ()=&gt; {
+				expect(()=&gt; {
+					instance.wire().as.value();
+				}).to.throw(/undefined/i);
+			});
+			it(&apos;should allow registration of a function as a singleton&apos;, ()=&gt; {
+				instance.wire(NOOP).as.singleton(&apos;singleton&apos;);
+				expect(instance.has(&apos;singleton&apos;)).to.be.true();
+			});
+			it(&apos;should allow registration of a function as a producer&apos;, ()=&gt; {
+				instance.wire(NOOP).as.producer(&apos;producer&apos;);
+				expect(instance.has(&apos;producer&apos;)).to.be.true();
+			});
+			it(&apos;should allow registration of a value as a value&apos;, ()=&gt; {
+				instance.wire({}).as.value(&apos;value&apos;);
+				expect(instance.has(&apos;value&apos;)).to.be.true();
+			});
+			it(&apos;should throw an error when `key` is already used&apos;, ()=&gt; {
+				instance.wire(NOOP).as.singleton(&apos;singleton&apos;);
+				expect(()=&gt; {
+					instance.wire(NOOP).as.singleton(&apos;singleton&apos;);
+				}).to.throw(/already exists/i);
+			});
+			it(&apos;should allow wiring falsy values&apos;, ()=&gt; {
+				FALSY_VALUES.forEach(falsy=&gt; {
+					expect(()=&gt; {
+						instance.wire(falsy);
+					}, `allow wiring &quot;${falsy}&quot; as a value`).to.not.throw();
+				});
+			});
+			it(&apos;should throw an error when using anything else but a string as a key&apos;, ()=&gt; {
+				FALSY_VALUES
+					.concat({}, [], NOOP, undefined)
+					.forEach((invalid)=&gt; {
+						expect(()=&gt; {
+							instance.wire(NOOP).as.value(invalid);
+						}).to.throw(/cannot use/i);
+					});
+			});
+		});
+		/**
+		 * @test {Context#require}
+		 */
+		describe(&apos;#require()&apos;, ()=&gt; {
+			let instance;
+			it(&apos;should throw if no `module` was provided&apos;, ()=&gt; {
+				instance = new subject();
+				expect(()=&gt; instance.require(&apos;./fixtures/foo&apos;)).to.throw(/module/i);
+			});
+			it(&apos;should require the file and allow wiring it up as a singleton producer&apos;, ()=&gt; {
+				instance = new subject(module);
+				instance.require(&apos;./fixtures/foo&apos;).as.singleton(&apos;foo&apos;);
+				const value = instance.retrieve(&apos;foo&apos;);
+				expect(instance.retrieve(&apos;foo&apos;)).to.equal(value);
+			});
+			it(&apos;should require the file and allow wiring it up as a producer&apos;, ()=&gt; {
+				instance = new subject(module);
+				instance.require(&apos;./fixtures/foo&apos;).as.producer(&apos;foo&apos;);
+				const value = instance.retrieve(&apos;foo&apos;);
+				expect(instance.retrieve(&apos;foo&apos;)).to.not.equal(value);
+			});
+		});
+		/**
+		 * @test {Context#resolve}
+		 */
+		describe(&apos;#resolve()&apos;, ()=&gt; {
+			let instance;
+			beforeEach(()=&gt; {
+				instance = new subject();
+			});
+			it(&apos;should resolve a function\&apos;s dependencies&apos;, ()=&gt; {
+				instance.wire(&apos;foo&apos;).as.value(&apos;foo&apos;);
+				instance.wire(&apos;baz&apos;).as.value(&apos;baz&apos;);
+				instance.wire(&apos;qux&apos;).as.value(&apos;qux&apos;);
+				const f = (foo, baz, qux)=&gt; {
+					return [foo, baz, qux]
+				};
+				const actual = instance.resolve(f);
+				expect(actual).to.eql([&apos;foo&apos;, &apos;baz&apos;, &apos;qux&apos;]);
+			});
+			it(&apos;should throw an error when a dependency is not found&apos;, ()=&gt; {
+				expect(()=&gt; {
+					instance.resolve(foo=&gt;foo);
+				}).to.throw(/not found/i);
+			});
+			it(&apos;should allow resolving a dependency with a falsy value&apos;, ()=&gt; {
+				FALSY_VALUES.forEach((falsy, key)=&gt; {
+					expect(()=&gt; {
+						instance
+							.wire(falsy).as.value(&apos;foo&apos;)
+							.resolve(foo=&gt;foo)
+					}, `allow resolving a dependency with &quot;${falsy}&quot; as a value`).to.not.throw();
+					instance.release(&apos;foo&apos;);
+				});
+			});
+			it(&apos;should throw an error when trying to resolve anything else but a function&apos;, ()=&gt; {
+				FALSY_VALUES
+					.concat({}, [], undefined)
+					.forEach((invalid)=&gt; {
+						expect(()=&gt; {
+							instance.resolve(invalid);
+						}).to.throw(/function/i);
+					});
+			});
+			it(&apos;should simply call a function without dependencies&apos;, ()=&gt; {
+				let called = false;
+				instance.resolve(()=&gt; {
+					called = true;
+				});
+				expect(called).to.be.true();
+			});
+		});
+		/**
+		 * @test {Context#retrieve}
+		 */
+		describe(&apos;#retrieve()&apos;, ()=&gt; {
+			let instance;
+			beforeEach(()=&gt; {
+				instance = new subject();
+			});
+			it(&apos;should throw an error when `key` is falsy&apos;);
+			it(&apos;should throw an error when the key is not found&apos;, ()=&gt; {
+				expect(()=&gt; {
+					instance.retrieve(&apos;not found&apos;);
+				}).to.throw(/not found/i);
+			});
+			it(&apos;should return the same instance for singletons&apos;, ()=&gt; {
+				instance.wire(() =&gt; ({})).as.singleton(&apos;singleton&apos;);
+				var actual1 = instance.retrieve(&apos;singleton&apos;);
+				var actual2 = instance.retrieve(&apos;singleton&apos;);
+				expect(actual1).to.not.be.undefined();
+				expect(actual1).to.equal(actual2);
+			});
+			it(&apos;should separate singleton instances for different keys&apos;, ()=&gt; {
+				const factory = () =&gt; ({});
+				instance.wire(factory).as.singleton(&apos;s1&apos;);
+				instance.wire(factory).as.singleton(&apos;s2&apos;);
+				var actual1 = instance.retrieve(&apos;s1&apos;);
+				var actual2 = instance.retrieve(&apos;s2&apos;);
+				expect(actual1).to.not.equal(actual2);
+			});
+			it(&apos;should return a new instance for producers&apos;, ()=&gt; {
+				instance.wire(() =&gt; ({})).as.producer(&apos;producer&apos;);
+				var actual1 = instance.retrieve(&apos;producer&apos;);
+				var actual2 = instance.retrieve(&apos;producer&apos;);
+				expect(actual1).to.not.equal(actual2);
+			});
+			it(&apos;should retrieve the upstream value when none is wired downstream&apos;, ()=&gt; {
+				const child = instance.spawn().spawn().spawn();
+				instance.wire(42).as.value(&apos;the answer to life, the universe and everything &apos;);
+				expect(child.retrieve(&apos;the answer to life, the universe and everything &apos;)).to.equal(42);
+			});
+			it(&apos;should retrieve the downstream value when overriding the upstream one&apos;, ()=&gt; {
+				const child = instance.spawn().spawn().spawn();
+				instance.wire(0).as.value(&apos;the answer to life, the universe and everything &apos;);
+				child.wire(42).as.value(&apos;the answer to life, the universe and everything &apos;);
+				expect(child.retrieve(&apos;the answer to life, the universe and everything &apos;)).to.equal(42);
+			});
+			it(&apos;should not retrieve the downstream value when the upstream one is requested&apos;, ()=&gt; {
+				const child = instance.spawn().spawn().spawn();
+				instance.wire(0).as.value(&apos;the answer to life, the universe and everything &apos;);
+				child.wire(42).as.value(&apos;the answer to life, the universe and everything &apos;);
+				expect(instance.retrieve(&apos;the answer to life, the universe and everything &apos;)).to.equal(0);
+			});
+			it(&apos;should not throw when the value is falsy&apos;, ()=&gt; {
+				FALSY_VALUES.forEach((falsy, key)=&gt; {
+					const keyStr = key.toString();
+					instance.wire(falsy).as.value(keyStr);
+					expect(()=&gt; {
+						instance.retrieve(keyStr);
+					}, `allow retrieving a &quot;${falsy}&quot; value`).to.not.throw();
+				});
+			});
+		});
+		/**
+		 * @test {Context#using}
+		 */
+		describe(&apos;#using()&apos;, ()=&gt; {
+			let instance;
+			beforeEach(()=&gt; {
+				instance = new subject();
+			});
+			it(&apos;should allow overriding dependencies when resolving&apos;, ()=&gt; {
+				instance.wire(NOOP).as.singleton(&apos;foo&apos;);
+				instance.wire(&apos;baz&apos;).as.value(&apos;baz&apos;);
+				const [foo, baz] = instance
+					.using({foo: 42})
+					.resolve((foo, baz) =&gt; [foo, baz]);
+				expect(foo).to.equal(42);
+				expect(baz).to.equal(&apos;baz&apos;);
+			});
+			it(&apos;should throw an error when a dependency is not found&apos;, ()=&gt; {
+				expect(()=&gt; {
+					instance
+						.using({foo: 42})
+						.resolve((foo, baz)=&gt;[foo, baz]);
+				}).to.throw(/not found/i);
+			});
+			it(&apos;should not throw an error when overridden with a falsy value&apos;, ()=&gt; {
+				FALSY_VALUES.forEach((falsy)=&gt; {
+					expect(()=&gt; {
+						instance
+							.using({foo: falsy})
+							.resolve(foo=&gt;foo);
+					}, `allow overriding with &quot;${falsy}&quot; as a value`).to.not.throw();
+				});
+			});
+			it(&apos;should throw an error when trying to resolve anything else but a function&apos;, ()=&gt; {
+				FALSY_VALUES
+					.concat({}, [], undefined)
+					.forEach((invalid)=&gt; {
+						expect(()=&gt; {
+							instance.using({}).resolve(invalid);
+						}).to.throw(/function/i);
+					});
+			});
+			it(&apos;should throw an error when trying to use anything else but a &quot;real&quot; object, Context or function&apos;, ()=&gt; {
+				FALSY_VALUES
+					.concat([], undefined)
+					.forEach((invalid)=&gt; {
+						expect(()=&gt; {
+							instance.using(invalid);
+						}, `disallow using &quot;${invalid}&quot; for overriding dependencies`).to.throw(/object/i);
+					});
+			});
+			it(&apos;should call a function to use its result for overriding dependencies&apos;, ()=&gt; {
+				const actual = instance.using(()=&gt;({foo: &apos;foo&apos;})).resolve((foo)=&gt;foo);
+				expect(actual).to.equal(&apos;foo&apos;);
+			});
+			it(&apos;should resolve a function to use its result for overriding dependencies&apos;, ()=&gt; {
+				instance.wire(&apos;baz&apos;).as.value(&apos;baz&apos;);
+				const actual = instance.using((baz)=&gt;({foo: baz})).resolve((foo)=&gt;foo);
+				expect(actual).to.equal(&apos;baz&apos;);
+			});
+			it(&apos;should allow using a different context for overriding dependencies&apos;, ()=&gt; {
+				const context = new subject();
+				context.wire(&apos;foo&apos;).as.value(&apos;foo&apos;);
+				const actual = instance.using(context).resolve((foo)=&gt;foo);
+				expect(actual).to.equal(&apos;foo&apos;);
+			});
+			it(&apos;should fallback to the current context when using a different context for overriding dependencies&apos;, ()=&gt; {
+				const context = new subject();
+				context.wire(&apos;foo&apos;).as.value(&apos;foo&apos;);
+				instance.wire(&apos;baz&apos;).as.value(&apos;baz&apos;);
+				const [foo, baz] = instance.using(context).resolve((foo, baz)=&gt;[foo, baz]);
+				expect(foo).to.equal(&apos;foo&apos;);
+				expect(baz).to.equal(&apos;baz&apos;);
+			});
+		});
+		/**
+		 * @test {Context#spawn}
+		 */
+		describe(&apos;#spawn()&apos;, ()=&gt; {
+			it(&apos;should create a child context&apos;, ()=&gt; {
+				const instance = new subject();
+				const child = instance.spawn();
+				expect(isContext(child)).to.be.true();
+				expect(child.parent).to.equal(instance);
+			});
+		});
+		/**
+		 * @test {Context#release}
+		 */
+		describe(&apos;#release()&apos;, ()=&gt; {
+			it(&apos;should unregister a dependency&apos;, ()=&gt; {
+				const instance = new subject();
+				instance.wire(NOOP).as.singleton(&apos;singleton&apos;);
+				instance.release(&apos;singleton&apos;);
+				expect(instance.has(&apos;singleton&apos;)).to.be.false();
+			});
+			it(&apos;should not throw when unregistering an unregistered dependency&apos;, ()=&gt; {
+				const instance = new subject();
+				expect(()=&gt; {
+					instance.release(&apos;singleton&apos;);
+				}).to.not.throw();
+			});
+		});
+	});
+});
+</code></pre>
+
+</div>
+
+<footer class="footer">
+  Generated by <a href="https://esdoc.org">ESDoc<span data-ice="esdocVersion">(0.4.6)</span></a>
+</footer>
+
+<script src="script/search_index.js"></script>
+<script src="script/search.js"></script>
+<script src="script/pretty-print.js"></script>
+<script src="script/inherited-summary.js"></script>
+<script src="script/test-summary.js"></script>
+<script src="script/inner-link.js"></script>
+<script src="script/patch-for-local.js"></script>
+</body>
+</html>

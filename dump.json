@@ -1,0 +1,2549 @@
+[
+  {
+    "__docId__": 0,
+    "kind": "file",
+    "static": true,
+    "variation": null,
+    "name": "src/mortar.js",
+    "memberof": null,
+    "longname": "src/mortar.js",
+    "access": null,
+    "description": null,
+    "lineNumber": 1,
+    "content": "import _ from 'lodash';\nimport isClass from 'is-class';\n\n// This regex detects the arguments portion of a function definition\n// Thanks to Angular for the regex\nconst FN_ARGS = /^function\\s*[^\\(]*\\(\\s*([^\\)]*)\\)/m;\nconst ERROR_PREFIX = '[Trowel]';\n\n/**\n * Mortar Context\n */\nexport default class Context {\n\t/**\n\t *\n\t * @param {Object} [module] node module\n\t * @param {Context} [parent] parent context\n\t */\n\tconstructor(module, parent) {\n\t\tif (!parent && module instanceof Context) {\n\t\t\tparent = module;\n\t\t\tmodule = parent.module;\n\t\t}\n\n\t\t/**\n\t\t * The module object used to resolve lazy requires.\n\t\t * @example\n\t\t * import Context from 'mortar'\n\t\t * import assert from 'assert'\n\t\t * \n\t\t * const context = new Context(module);\n\t\t * assert.strictEqual(module, context.module);\n\t\t * context.require('./models/User').as.singleton('CurrentUser');\n\t\t * context.retrieve('CurrentUser'); //lazily required the User model relative to this module\n\t\t * \n\t\t * @type {Object}\n\t\t */\n\t\tthis.module = module;\n\t\t/**\n\t\t * The parent {@link Context} instance. Allows to set up hierarchical dependency injection containers.\n\t\t * @example\n\t\t * import Context from 'mortar'\n\t\t * import assert from 'assert'\n\t\t * const context = Context.create();\n\t\t * const child = context.spawn();\n\t\t * assert.strictEqual(child.parent, context);\n\t\t * @type {Context}\n\t\t */\n\t\tthis.parent = parent;\n\t\tthis._cache = new Map();\n\t\t/**\n\t\t *\n\t\t * @type {Map<string,function>}\n\t\t */\n\t\tthis.providers = new Map();\n\t\tfor (let [name, configure] of Context.providers) {\n\t\t\tthis.providers.set(name, configure(this));\n\t\t}\n\t}\n\n\t/**\n\t * Registers a value to a provider for `key`.\n\t * @example\n\t * import Context from 'mortar'\n\t * import assert from 'assert'\n\t * const context = Context.create();\n\t * function foo(){\n\t * \treturn {};\n\t * }\n\t * context.wire(foo).as.singleton('foo'); // always returns the same object\n\t * const f1 = context.retrieve('foo');\n\t * const f2 = context.retrieve('foo');\n\t * assert.strictEqual(f1, f2);\n\t * @example\n\t * import Context from 'mortar'\n\t * import assert from 'assert'\n\t * const context = Context.create();\n\t * function foo(){\n\t * \treturn {};\n\t * }\n\t * context.wire(foo).as.producer('foo'); // returns a new object every time we retrieve \"foo\"\n\t * const f1 = context.retrieve('foo');\n\t * const f2 = context.retrieve('foo');\n\t * assert.notStrictEqual(f1, f2);\n\t * @example\n\t * import Context from 'mortar'\n\t * import assert from 'assert'\n\t * const context = Context.create();\n\t * function foo(){\n\t * \treturn {};\n\t * }\n\t * context.wire(foo).as.value('foo'); // returns the `foo` function\n\t * const f = context.retrieve('foo');\n\t * assert.strictEqual(f, foo);\n\t * @param {*} subject - The value you want to register to the context\n\t * @param {boolean} [constructable=false] - whether `new` should be used or the function should be called directly\n\t * @throws {Error} when `subject` is `undefined`\n\t * @throws {Error} when `key` already registered\n\t * @throws {Error} when `key` not a String\n\t * @returns {object}\n\t * @property {function(key: string):Context} as.singleton - registers `subject` as a singleton provider for `key`\n\t * @property {function(key: string):Context} as.producer - registers `subject` as a producer for `key`\n\t * @property {function(key: string):Context} as.value - registers `subject` as a value for `key`\n\t */\n\twire(subject, constructable = false) {\n\t\tlet as = {};\n\t\tfor (let [name, provide] of this.providers) {\n\t\t\tas[name] = ((provide, name) => {\n\t\t\t\treturn (key) => {\n\t\t\t\t\tif (typeof subject === 'undefined') {\n\t\t\t\t\t\tthrow new Error(`${ERROR_PREFIX} Cannot wire 'undefined' as a ${name}`);\n\t\t\t\t\t}\n\t\t\t\t\tif (this.has(key)) {\n\t\t\t\t\t\tthrow new Error(`${ERROR_PREFIX} Wiring already exists for key '${key}'`);\n\t\t\t\t\t} else if (!_.isString(key) || key === '') {\n\t\t\t\t\t\tthrow new Error(`${ERROR_PREFIX} Cannot use ${key} as a key for wiring`);\n\t\t\t\t\t}\n\t\t\t\t\tthis._cache.set(key, {subject: subject, provide: provide, constructable: constructable});\n\t\t\t\t\treturn this;\n\t\t\t\t};\n\t\t\t})(provide, name);\n\t\t}\n\t\tas.as = as;\n\t\treturn as;\n\t}\n\n\t/**\n\t * Sets up lazy `require`ing of `id` when `key` is requested, relative to `module`.\n\t * \n\t * See {@link Context#wire}\n\t * @example\n\t * import Context from 'mortar'\n\t * \n\t * const context = Context.create(module);\n\t * context.require('./models/User').as.singleton('CurrentUser');\n\t * // no code has been loaded yet\n\t * context.retrieve('CurrentUser');\n\t * // now './models/User' is resolved and used to produce a singleton instance\n\t * @param {String} id - the module id, e.g. \"lodash\" or \"./models/User\"\n\t * @returns {object}\n\t * @property {function(key: string):Context} as.singleton - registers `id` to be lazily required as a singleton provider for `key`\n\t * @property {function(key: string):Context} as.producer - registers `id` to be lazily required as a producer for `key`\n\t * @property {function(key: string):Context} as.value - registers `id` to be lazily required as a value for `key`\n\t */\n\trequire(id) {\n\t\tif (!this.module) {\n\t\t\tthrow new Error(`${ERROR_PREFIX} Cannot require without providing a module to the constructor`);\n\t\t}\n\t\tconst wrapped = ()=> {\n\t\t\treturn this.module.require(id);\n\t\t};\n\t\twrapped.__mortar_wrapped = true;\n\t\treturn this.wire(wrapped);\n\t}\n\n\t/**\n\t * Unregisters `key`\n\t * \n\t * @example\n\t * import Context from 'mortar'\n\t * import assert from 'assert'\n\t * \n\t * const context = Context.create();\n\t * context.wire(42).as.value('the answer to life, the universe and everything');\n\t * assert.ok(context.has('the answer to life, the universe and everything'));\n\t * context.release('the answer to life, the universe and everything');\n\t * assert.ok(! context.has('the answer to life, the universe and everything'));\n\t * @param {String} key - registration key\n\t */\n\trelease(key) {\n\t\tthis._cache.delete(key);\n\t}\n\n\t/**\n\t * Retrieves `subject`'s dependencies and calls it.\n\t * \n\t * @example\n\t * import Context from 'mortar'\n\t * \n\t * function qux(){\n\t *   return 'and thanks for all the fish!';\n\t * }\n\t * const context = Context.create();\n\t * context\n\t *   .wire('So long').as.value('foo')\n\t *   .wire(qux).as.producer('qux');\n\t * \n\t * context.resolve(function (foo, qux){\n\t *   console.log(foo, qux); // outputs: So long, and thanks for all the fish!\n\t * });\n\t * @param {Function} subject\n\t * @param {Boolean} [constructable=false] - whether `new` should be used or the function should be called directly\n\t * @returns {*}\n\t */\n\tresolve(subject, constructable = false) {\n\t\treturn this.using(this.parent || {}).resolve(subject, constructable);\n\t}\n\n\t/**\n\t * Allows you to override registered dependencies through another {@link Context} or mapping.\n\t * @example\n\t * import Context from 'mortar'\n\t * \n\t * const context = Context.create();\n\t * context\n\t *   .wire('So long').as.value('foo')\n\t *   .wire('and thanks for all the fish!').as.value('qux');\n\t * \n\t * const subject = function (foo, qux){\n\t *   console.log(foo, qux);\n\t * );\n\t * \n\t * context.using({\n\t *   foo: 'Adieu'\n\t * }).resolve(subject);\n\t * //outputs: Adieu, and thanks for all the fish!\n\t * @param {Context|Object} contextOrMap\n\t * @returns {{resolve: resolve}}\n\t */\n\tusing(contextOrMap) {\n\t\tconst context = this;\n\t\tif (_.isArray(contextOrMap) || (!_.isObject(contextOrMap) && !isContext(contextOrMap))) {\n\t\t\tthrow new Error(`${ERROR_PREFIX} Cannot use anything else but an object or Context \n\t\t\t\tto override dependency resolutions`);\n\t\t} else if (_.isFunction(contextOrMap)) { //functions are objects too, i.e. won't branch into \"if\"\n\t\t\tcontextOrMap = this.resolve(contextOrMap);\n\t\t}\n\t\treturn {\n\t\t\tresolve: function(subject, constructable = false) {\n\t\t\t\tif (!_.isFunction(subject)) {\n\t\t\t\t\tthrow new Error(`{ERROR_PREFIX} Cannot resolve anything else but a function`);\n\t\t\t\t}\n\t\t\t\tconst dependencies = Context.getDependencies(subject);\n\t\t\t\tlet resolved;\n\t\t\t\tif (isContext(contextOrMap)) {\n\t\t\t\t\tresolved = dependencies.map((dependency) => {\n\t\t\t\t\t\treturn contextOrMap._retrieveWithFallback(dependency, context);\n\t\t\t\t\t});\n\t\t\t\t} else {\n\t\t\t\t\tresolved = dependencies.map((dependency) => {\n\t\t\t\t\t\tlet value = contextOrMap[dependency];\n\t\t\t\t\t\tif (typeof value === 'undefined') {\n\t\t\t\t\t\t\tvalue = context.retrieve(dependency);\n\t\t\t\t\t\t}\n\t\t\t\t\t\treturn value;\n\t\t\t\t\t});\n\t\t\t\t}\n\t\t\t\treturn (constructable || isClass(subject)) ? new subject(...resolved) : subject(...resolved);\n\t\t\t}\n\t\t};\n\t}\n\n\t_retrieveWithFallback(key, fallback) {\n\t\tlet config = this._cache.get(key);\n\t\tlet value;\n\t\tif (!config) {\n\t\t\tif (fallback) {\n\t\t\t\tvalue = fallback.retrieve(key);\n\t\t\t}\n\t\t} else {\n\t\t\tif (_.get(config.subject, '__mortar_wrapped', false)) {\n\t\t\t\tconfig.subject = config.subject();\n\t\t\t}\n\t\t\tvalue = config.provide(config.subject, config.constructable);\n\t\t}\n\t\tif (typeof value === 'undefined') {\n\t\t\tthrow new Error(`${ERROR_PREFIX} wiring not found for key '${key}'`);\n\t\t}\n\t\treturn value;\n\t}\n\n\t/**\n\t * Retrieves the value registered to `key` using whatever rule it was wired with.\n\t * @example\n\t * import Context from 'mortar'\n\t * import assert from 'assert'\n\t * const context = Context.create();\n\t * function foo(){\n\t * \treturn {};\n\t * }\n\t * context.wire(foo).as.singleton('foo'); // always returns the same object\n\t * const f1 = context.retrieve('foo');\n\t * const f2 = context.retrieve('foo');\n\t * assert.strictEqual(f1, f2);\n\t * @param {!String} key\n\t * @returns {*}\n\t */\n\tretrieve(key) {\n\t\treturn this._retrieveWithFallback(key, this.parent);\n\t}\n\n\t/**\n\t * Checks whether a rule is registered to `key`.\n\t * @example\n\t * import Context from 'mortar'\n\t * import assert from 'assert'\n\t * const context = Context.create();\n\t * assert.ok(! context.has('foo'));\n\t * context.wire(42).as.value('foo');\n\t * assert.ok(context.has('foo'));\n\t * @param {!String} key\n\t * @returns {boolean}\n\t */\n\thas(key) {\n\t\treturn this._cache.has(key);\n\t}\n\n\t/**\n\t * Spawns a child context\n\t * @example\n\t * import Context from 'mortar'\n\t * import assert from 'assert'\n\t * const context = Context.create();\n\t * const child = context.spawn();\n\t * assert.strictEquals(child.parent, context);\n\t * @returns {Context}\n\t */\n\tspawn() {\n\t\treturn Context.create(this.module, this);\n\t}\n\n\t/**\n\t * Parses the dependencies of a function, by name.\n\t * \n\t * @example\n\t * import Context from 'mortar'\n\t * function foo( baz, qux, lodash ){}\n\t * Context.getDependencies(foo); // ['baz', 'qux', 'lodash']\n\t * @param {!Function} subject\n\t * @returns {Array.<String>}\n\t */\n\tstatic getDependencies(subject) {\n\t\tif (!_.isFunction(subject)) {\n\t\t\tthrow new Error(`${ERROR_PREFIX} cannot retrieve dependencies of anything else but a function`);\n\t\t}\n\t\treturn Function.prototype.toString.call(subject)\n\t\t\t.match(FN_ARGS)[1]\n\t\t\t.split(',')\n\t\t\t.map((i) => i.trim())\n\t\t\t.filter((i)=>i);\n\t}\n\n\t/**\n\t * Factory method, creates a new context instance; thin wrapper for:\n\t * ```js\n\t * new Context(module, parent)\n\t * ```\n\t * See {@link Context#constructor}\n\t * @param {Object} [module] node module\n\t * @param {Context} [parent] parent context\n\t * @returns {Context}\n\t */\n\tstatic create(module, parent) {\n\t\treturn new Context(module, parent);\n\t}\n\n\t/**\n\t * Registers a provider to all instances. Either provide a named function, or an object with `name` and `configure` propterties\n\t * @param {Function|Object} provider\n\t * @param {!String} provider.name\n\t * @param {Function} provider.configure\n\t * @returns {Context}\n\t */\n\tstatic register(provider) {\n\t\tif (!Context.providers) {\n\t\t\tContext.providers = new Map();\n\t\t} else if (Context.providers.has(provider.name)) {\n\t\t\tthrow new Error(`${ERROR_PREFIX} provider already registered for '${provider.name}'`);\n\t\t}\n\t\tContext.providers.set(provider.name, provider.configure || provider);\n\t\treturn Context;\n\t}\n}\n\n/**\n * Wrapper for \n * ```js\n * subject instanceof Context\n * ```\n * @param {*} subject\n * @returns {boolean}\n */\nexport function isContext(subject) {\n\treturn subject instanceof Context;\n}\n\nContext\n\t.register(function singleton(context) {\n\t\treturn function getOrCreateInstance(factory, constructable=false) {\n\t\t\tif (typeof this.instance === 'undefined') {\n\t\t\t\tthis.instance = context.resolve(factory, constructable);\n\t\t\t}\n\t\t\treturn this.instance;\n\t\t};\n\t})\n\t.register(function value(/*context*/) {\n\t\treturn (value) => value;\n\t})\n\t.register(function producer(context) {\n\t\treturn (factory, constructable=false) => context.resolve(factory, constructable);\n\t})\n;\n"
+  },
+  {
+    "__docId__": 1,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "FN_ARGS",
+    "memberof": "src/mortar.js",
+    "longname": "src/mortar.js~FN_ARGS",
+    "access": null,
+    "export": false,
+    "importPath": "mortar/src/mortar.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 6,
+    "undocument": true,
+    "type": {
+      "types": [
+        "object"
+      ]
+    }
+  },
+  {
+    "__docId__": 2,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "ERROR_PREFIX",
+    "memberof": "src/mortar.js",
+    "longname": "src/mortar.js~ERROR_PREFIX",
+    "access": null,
+    "export": false,
+    "importPath": "mortar/src/mortar.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 7,
+    "undocument": true,
+    "type": {
+      "types": [
+        "string"
+      ]
+    }
+  },
+  {
+    "__docId__": 3,
+    "kind": "class",
+    "static": true,
+    "variation": null,
+    "name": "Context",
+    "memberof": "src/mortar.js",
+    "longname": "src/mortar.js~Context",
+    "access": null,
+    "export": true,
+    "importPath": "mortar/src/mortar.js",
+    "importStyle": "Context",
+    "description": "Mortar Context",
+    "lineNumber": 12,
+    "interface": false
+  },
+  {
+    "__docId__": 4,
+    "kind": "constructor",
+    "static": false,
+    "variation": null,
+    "name": "constructor",
+    "memberof": "src/mortar.js~Context",
+    "longname": "src/mortar.js~Context#constructor",
+    "access": null,
+    "description": "",
+    "lineNumber": 18,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "Object"
+        ],
+        "spread": false,
+        "optional": true,
+        "name": "module",
+        "description": "node module"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "Context"
+        ],
+        "spread": false,
+        "optional": true,
+        "name": "parent",
+        "description": "parent context"
+      }
+    ],
+    "generator": false
+  },
+  {
+    "__docId__": 5,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "module",
+    "memberof": "src/mortar.js~Context",
+    "longname": "src/mortar.js~Context#module",
+    "access": null,
+    "description": "The module object used to resolve lazy requires.",
+    "examples": [
+      "import Context from 'mortar'\nimport assert from 'assert'\n\nconst context = new Context(module);\nassert.strictEqual(module, context.module);\ncontext.require('./models/User').as.singleton('CurrentUser');\ncontext.retrieve('CurrentUser'); //lazily required the User model relative to this module"
+    ],
+    "lineNumber": 37,
+    "type": {
+      "nullable": null,
+      "types": [
+        "Object"
+      ],
+      "spread": false,
+      "description": null
+    }
+  },
+  {
+    "__docId__": 6,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "parent",
+    "memberof": "src/mortar.js~Context",
+    "longname": "src/mortar.js~Context#parent",
+    "access": null,
+    "description": "The parent {@link Context} instance. Allows to set up hierarchical dependency injection containers.",
+    "examples": [
+      "import Context from 'mortar'\nimport assert from 'assert'\nconst context = Context.create();\nconst child = context.spawn();\nassert.strictEqual(child.parent, context);"
+    ],
+    "lineNumber": 48,
+    "type": {
+      "nullable": null,
+      "types": [
+        "Context"
+      ],
+      "spread": false,
+      "description": null
+    }
+  },
+  {
+    "__docId__": 7,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "_cache",
+    "memberof": "src/mortar.js~Context",
+    "longname": "src/mortar.js~Context#_cache",
+    "access": null,
+    "description": null,
+    "lineNumber": 49,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 8,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "providers",
+    "memberof": "src/mortar.js~Context",
+    "longname": "src/mortar.js~Context#providers",
+    "access": null,
+    "description": "",
+    "lineNumber": 54,
+    "type": {
+      "nullable": null,
+      "types": [
+        "Map<string,function>"
+      ],
+      "spread": false,
+      "description": null
+    }
+  },
+  {
+    "__docId__": 9,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "wire",
+    "memberof": "src/mortar.js~Context",
+    "longname": "src/mortar.js~Context#wire",
+    "access": null,
+    "description": "Registers a value to a provider for `key`.",
+    "examples": [
+      "import Context from 'mortar'\nimport assert from 'assert'\nconst context = Context.create();\nfunction foo(){\n\treturn {};\n}\ncontext.wire(foo).as.singleton('foo'); // always returns the same object\nconst f1 = context.retrieve('foo');\nconst f2 = context.retrieve('foo');\nassert.strictEqual(f1, f2);",
+      "import Context from 'mortar'\nimport assert from 'assert'\nconst context = Context.create();\nfunction foo(){\n\treturn {};\n}\ncontext.wire(foo).as.producer('foo'); // returns a new object every time we retrieve \"foo\"\nconst f1 = context.retrieve('foo');\nconst f2 = context.retrieve('foo');\nassert.notStrictEqual(f1, f2);",
+      "import Context from 'mortar'\nimport assert from 'assert'\nconst context = Context.create();\nfunction foo(){\n\treturn {};\n}\ncontext.wire(foo).as.value('foo'); // returns the `foo` function\nconst f = context.retrieve('foo');\nassert.strictEqual(f, foo);"
+    ],
+    "lineNumber": 104,
+    "unknown": [
+      {
+        "tagName": "@returns",
+        "tagValue": "{object}"
+      }
+    ],
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "*"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "subject",
+        "description": "The value you want to register to the context"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "boolean"
+        ],
+        "spread": false,
+        "optional": true,
+        "defaultValue": "false",
+        "defaultRaw": false,
+        "name": "constructable",
+        "description": "whether `new` should be used or the function should be called directly"
+      }
+    ],
+    "properties": [
+      {
+        "nullable": null,
+        "types": [
+          "function(key: string):Context"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "as.singleton",
+        "description": "registers `subject` as a singleton provider for `key`"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "function(key: string):Context"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "as.producer",
+        "description": "registers `subject` as a producer for `key`"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "function(key: string):Context"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "as.value",
+        "description": "registers `subject` as a value for `key`"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "object"
+      ],
+      "spread": false,
+      "description": ""
+    },
+    "throws": [
+      {
+        "types": [
+          "Error"
+        ],
+        "description": "when `subject` is `undefined`"
+      },
+      {
+        "types": [
+          "Error"
+        ],
+        "description": "when `key` already registered"
+      },
+      {
+        "types": [
+          "Error"
+        ],
+        "description": "when `key` not a String"
+      }
+    ],
+    "generator": false
+  },
+  {
+    "__docId__": 10,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "require",
+    "memberof": "src/mortar.js~Context",
+    "longname": "src/mortar.js~Context#require",
+    "access": null,
+    "description": "Sets up lazy `require`ing of `id` when `key` is requested, relative to `module`.\n\nSee {@link Context#wire}",
+    "examples": [
+      "import Context from 'mortar'\n\nconst context = Context.create(module);\ncontext.require('./models/User').as.singleton('CurrentUser');\n// no code has been loaded yet\ncontext.retrieve('CurrentUser');\n// now './models/User' is resolved and used to produce a singleton instance"
+    ],
+    "lineNumber": 144,
+    "unknown": [
+      {
+        "tagName": "@returns",
+        "tagValue": "{object}"
+      }
+    ],
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "String"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "id",
+        "description": "the module id, e.g. \"lodash\" or \"./models/User\""
+      }
+    ],
+    "properties": [
+      {
+        "nullable": null,
+        "types": [
+          "function(key: string):Context"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "as.singleton",
+        "description": "registers `id` to be lazily required as a singleton provider for `key`"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "function(key: string):Context"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "as.producer",
+        "description": "registers `id` to be lazily required as a producer for `key`"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "function(key: string):Context"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "as.value",
+        "description": "registers `id` to be lazily required as a value for `key`"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "object"
+      ],
+      "spread": false,
+      "description": ""
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 11,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "release",
+    "memberof": "src/mortar.js~Context",
+    "longname": "src/mortar.js~Context#release",
+    "access": null,
+    "description": "Unregisters `key`",
+    "examples": [
+      "import Context from 'mortar'\nimport assert from 'assert'\n\nconst context = Context.create();\ncontext.wire(42).as.value('the answer to life, the universe and everything');\nassert.ok(context.has('the answer to life, the universe and everything'));\ncontext.release('the answer to life, the universe and everything');\nassert.ok(! context.has('the answer to life, the universe and everything'));"
+    ],
+    "lineNumber": 169,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "String"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "key",
+        "description": "registration key"
+      }
+    ],
+    "generator": false
+  },
+  {
+    "__docId__": 12,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "resolve",
+    "memberof": "src/mortar.js~Context",
+    "longname": "src/mortar.js~Context#resolve",
+    "access": null,
+    "description": "Retrieves `subject`'s dependencies and calls it.",
+    "examples": [
+      "import Context from 'mortar'\n\nfunction qux(){\n  return 'and thanks for all the fish!';\n}\nconst context = Context.create();\ncontext\n  .wire('So long').as.value('foo')\n  .wire(qux).as.producer('qux');\n\ncontext.resolve(function (foo, qux){\n  console.log(foo, qux); // outputs: So long, and thanks for all the fish!\n});"
+    ],
+    "lineNumber": 194,
+    "unknown": [
+      {
+        "tagName": "@returns",
+        "tagValue": "{*}"
+      }
+    ],
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "Function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "subject",
+        "description": ""
+      },
+      {
+        "nullable": null,
+        "types": [
+          "Boolean"
+        ],
+        "spread": false,
+        "optional": true,
+        "defaultValue": "false",
+        "defaultRaw": false,
+        "name": "constructable",
+        "description": "whether `new` should be used or the function should be called directly"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "*"
+      ],
+      "spread": false,
+      "description": ""
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 13,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "using",
+    "memberof": "src/mortar.js~Context",
+    "longname": "src/mortar.js~Context#using",
+    "access": null,
+    "description": "Allows you to override registered dependencies through another {@link Context} or mapping.",
+    "examples": [
+      "import Context from 'mortar'\n\nconst context = Context.create();\ncontext\n  .wire('So long').as.value('foo')\n  .wire('and thanks for all the fish!').as.value('qux');\n\nconst subject = function (foo, qux){\n  console.log(foo, qux);\n);\n\ncontext.using({\n  foo: 'Adieu'\n}).resolve(subject);\n//outputs: Adieu, and thanks for all the fish!"
+    ],
+    "lineNumber": 219,
+    "unknown": [
+      {
+        "tagName": "@returns",
+        "tagValue": "{{resolve: resolve}}"
+      }
+    ],
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "Context",
+          "Object"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "contextOrMap",
+        "description": ""
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "{resolve: resolve}"
+      ],
+      "spread": false,
+      "description": ""
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 14,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "_retrieveWithFallback",
+    "memberof": "src/mortar.js~Context",
+    "longname": "src/mortar.js~Context#_retrieveWithFallback",
+    "access": null,
+    "description": null,
+    "lineNumber": 252,
+    "undocument": true,
+    "params": [
+      {
+        "name": "key",
+        "types": [
+          "*"
+        ]
+      },
+      {
+        "name": "fallback",
+        "types": [
+          "*"
+        ]
+      }
+    ],
+    "return": {
+      "types": [
+        "*"
+      ]
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 15,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "retrieve",
+    "memberof": "src/mortar.js~Context",
+    "longname": "src/mortar.js~Context#retrieve",
+    "access": null,
+    "description": "Retrieves the value registered to `key` using whatever rule it was wired with.",
+    "examples": [
+      "import Context from 'mortar'\nimport assert from 'assert'\nconst context = Context.create();\nfunction foo(){\n\treturn {};\n}\ncontext.wire(foo).as.singleton('foo'); // always returns the same object\nconst f1 = context.retrieve('foo');\nconst f2 = context.retrieve('foo');\nassert.strictEqual(f1, f2);"
+    ],
+    "lineNumber": 287,
+    "unknown": [
+      {
+        "tagName": "@returns",
+        "tagValue": "{*}"
+      }
+    ],
+    "params": [
+      {
+        "nullable": false,
+        "types": [
+          "String"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "key",
+        "description": ""
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "*"
+      ],
+      "spread": false,
+      "description": ""
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 16,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "has",
+    "memberof": "src/mortar.js~Context",
+    "longname": "src/mortar.js~Context#has",
+    "access": null,
+    "description": "Checks whether a rule is registered to `key`.",
+    "examples": [
+      "import Context from 'mortar'\nimport assert from 'assert'\nconst context = Context.create();\nassert.ok(! context.has('foo'));\ncontext.wire(42).as.value('foo');\nassert.ok(context.has('foo'));"
+    ],
+    "lineNumber": 303,
+    "unknown": [
+      {
+        "tagName": "@returns",
+        "tagValue": "{boolean}"
+      }
+    ],
+    "params": [
+      {
+        "nullable": false,
+        "types": [
+          "String"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "key",
+        "description": ""
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "boolean"
+      ],
+      "spread": false,
+      "description": ""
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 17,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "spawn",
+    "memberof": "src/mortar.js~Context",
+    "longname": "src/mortar.js~Context#spawn",
+    "access": null,
+    "description": "Spawns a child context",
+    "examples": [
+      "import Context from 'mortar'\nimport assert from 'assert'\nconst context = Context.create();\nconst child = context.spawn();\nassert.strictEquals(child.parent, context);"
+    ],
+    "lineNumber": 317,
+    "unknown": [
+      {
+        "tagName": "@returns",
+        "tagValue": "{Context}"
+      }
+    ],
+    "params": [],
+    "return": {
+      "nullable": null,
+      "types": [
+        "Context"
+      ],
+      "spread": false,
+      "description": ""
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 18,
+    "kind": "method",
+    "static": true,
+    "variation": null,
+    "name": "getDependencies",
+    "memberof": "src/mortar.js~Context",
+    "longname": "src/mortar.js~Context.getDependencies",
+    "access": null,
+    "description": "Parses the dependencies of a function, by name.",
+    "examples": [
+      "import Context from 'mortar'\nfunction foo( baz, qux, lodash ){}\nContext.getDependencies(foo); // ['baz', 'qux', 'lodash']"
+    ],
+    "lineNumber": 331,
+    "unknown": [
+      {
+        "tagName": "@returns",
+        "tagValue": "{Array.<String>}"
+      }
+    ],
+    "params": [
+      {
+        "nullable": false,
+        "types": [
+          "Function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "subject",
+        "description": ""
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "Array.<String>"
+      ],
+      "spread": false,
+      "description": ""
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 19,
+    "kind": "method",
+    "static": true,
+    "variation": null,
+    "name": "create",
+    "memberof": "src/mortar.js~Context",
+    "longname": "src/mortar.js~Context.create",
+    "access": null,
+    "description": "Factory method, creates a new context instance; thin wrapper for:\n```js\nnew Context(module, parent)\n```\nSee {@link Context#constructor}",
+    "lineNumber": 352,
+    "unknown": [
+      {
+        "tagName": "@returns",
+        "tagValue": "{Context}"
+      }
+    ],
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "Object"
+        ],
+        "spread": false,
+        "optional": true,
+        "name": "module",
+        "description": "node module"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "Context"
+        ],
+        "spread": false,
+        "optional": true,
+        "name": "parent",
+        "description": "parent context"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "Context"
+      ],
+      "spread": false,
+      "description": ""
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 20,
+    "kind": "method",
+    "static": true,
+    "variation": null,
+    "name": "register",
+    "memberof": "src/mortar.js~Context",
+    "longname": "src/mortar.js~Context.register",
+    "access": null,
+    "description": "Registers a provider to all instances. Either provide a named function, or an object with `name` and `configure` propterties",
+    "lineNumber": 363,
+    "unknown": [
+      {
+        "tagName": "@returns",
+        "tagValue": "{Context}"
+      }
+    ],
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "Function",
+          "Object"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "provider",
+        "description": ""
+      },
+      {
+        "nullable": false,
+        "types": [
+          "String"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "provider.name",
+        "description": ""
+      },
+      {
+        "nullable": null,
+        "types": [
+          "Function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "provider.configure",
+        "description": ""
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "Context"
+      ],
+      "spread": false,
+      "description": ""
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 21,
+    "kind": "function",
+    "static": true,
+    "variation": null,
+    "name": "isContext",
+    "memberof": "src/mortar.js",
+    "longname": "src/mortar.js~isContext",
+    "access": null,
+    "export": true,
+    "importPath": "mortar/src/mortar.js",
+    "importStyle": "{isContext}",
+    "description": "Wrapper for \n```js\nsubject instanceof Context\n```",
+    "lineNumber": 382,
+    "unknown": [
+      {
+        "tagName": "@returns",
+        "tagValue": "{boolean}"
+      }
+    ],
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "*"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "subject",
+        "description": ""
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "boolean"
+      ],
+      "spread": false,
+      "description": ""
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 23,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Infinity",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Infinity",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Infinity",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 24,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "NaN",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/NaN",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~NaN",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 25,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "undefined",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/undefined",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~undefined",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 26,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "null",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/null",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~null",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 27,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Object",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Object",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 28,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "object",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~object",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 29,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Function",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Function",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Function",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 30,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "function",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Function",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~function",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 31,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Boolean",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Boolean",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Boolean",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 32,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "boolean",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Boolean",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~boolean",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 33,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Symbol",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Symbol",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Symbol",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 34,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Error",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Error",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 35,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "EvalError",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/EvalError",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~EvalError",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 36,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "InternalError",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/InternalError",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~InternalError",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 37,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "RangeError",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RangeError",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~RangeError",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 38,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "ReferenceError",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/ReferenceError",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~ReferenceError",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 39,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "SyntaxError",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SyntaxError",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~SyntaxError",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 40,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "TypeError",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypeError",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~TypeError",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 41,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "URIError",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/URIError",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~URIError",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 42,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Number",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Number",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Number",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 43,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "number",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Number",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~number",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 44,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Date",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Date",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Date",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 45,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "String",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~String",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 46,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "string",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~string",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 47,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "RegExp",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~RegExp",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 48,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Array",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Array",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 49,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Int8Array",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Int8Array",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Int8Array",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 50,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Uint8Array",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Uint8Array",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 51,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Uint8ClampedArray",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8ClampedArray",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Uint8ClampedArray",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 52,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Int16Array",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Int16Array",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Int16Array",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 53,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Uint16Array",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint16Array",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Uint16Array",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 54,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Int32Array",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Int32Array",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Int32Array",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 55,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Uint32Array",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint32Array",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Uint32Array",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 56,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Float32Array",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Float32Array",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Float32Array",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 57,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Float64Array",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Float64Array",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Float64Array",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 58,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Map",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Map",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Map",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 59,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Set",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Set",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Set",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 60,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "WeakMap",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/WeakMap",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~WeakMap",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 61,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "WeakSet",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/WeakSet",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~WeakSet",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 62,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "ArrayBuffer",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/ArrayBuffer",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~ArrayBuffer",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 63,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "DataView",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~DataView",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 64,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "JSON",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/JSON",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~JSON",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 65,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Promise",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Promise",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 66,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Generator",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Generator",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Generator",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 67,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "GeneratorFunction",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/GeneratorFunction",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~GeneratorFunction",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 68,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Reflect",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Reflect",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Reflect",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 69,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Proxy",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Proxy",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Proxy",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 71,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "CanvasRenderingContext2D",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D",
+    "memberof": "BuiltinExternal/WebAPIExternal.js",
+    "longname": "BuiltinExternal/WebAPIExternal.js~CanvasRenderingContext2D",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 72,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "DocumentFragment",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/API/DocumentFragment",
+    "memberof": "BuiltinExternal/WebAPIExternal.js",
+    "longname": "BuiltinExternal/WebAPIExternal.js~DocumentFragment",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 73,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Element",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/API/Element",
+    "memberof": "BuiltinExternal/WebAPIExternal.js",
+    "longname": "BuiltinExternal/WebAPIExternal.js~Element",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 74,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Event",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/API/Event",
+    "memberof": "BuiltinExternal/WebAPIExternal.js",
+    "longname": "BuiltinExternal/WebAPIExternal.js~Event",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 75,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Node",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/API/Node",
+    "memberof": "BuiltinExternal/WebAPIExternal.js",
+    "longname": "BuiltinExternal/WebAPIExternal.js~Node",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 76,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "NodeList",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/API/NodeList",
+    "memberof": "BuiltinExternal/WebAPIExternal.js",
+    "longname": "BuiltinExternal/WebAPIExternal.js~NodeList",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 77,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "XMLHttpRequest",
+    "externalLink": "https://developer.mozilla.org/en/docs/Web/API/XMLHttpRequest",
+    "memberof": "BuiltinExternal/WebAPIExternal.js",
+    "longname": "BuiltinExternal/WebAPIExternal.js~XMLHttpRequest",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 78,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "AudioContext",
+    "externalLink": "https://developer.mozilla.org/en/docs/Web/API/AudioContext",
+    "memberof": "BuiltinExternal/WebAPIExternal.js",
+    "longname": "BuiltinExternal/WebAPIExternal.js~AudioContext",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 79,
+    "kind": "testFile",
+    "static": true,
+    "variation": null,
+    "name": "test/mortar.spec.js",
+    "memberof": null,
+    "longname": "test/mortar.spec.js",
+    "access": null,
+    "description": null,
+    "lineNumber": 1,
+    "content": "'use strict';\nimport expect from 'must';\nimport isClass from 'is-class';\nimport subject, {isContext} from '../src/mortar.js';\n\nconst NOOP = ()=> {\n};\nconst FALSY_VALUES = [false, 0, '', null];\n\ndescribe('{mortar}', () => {\n\tdescribe('module', () => {\n\t\tit('should be a class', () => {\n\t\t\texpect(isClass(subject)).to.be.true();\n\t\t});\n\t\tit('should be instantiatable', ()=> {\n\t\t\tconst instance = new subject();\n\t\t\texpect(isContext(instance)).to.be.true();\n\t\t});\n\t\tit('should throw an error when called directly', ()=> {\n\t\t\texpect(() => {\n\t\t\t\tconst instance = subject();\n\t\t\t}).to.throw(/cannot call/i);\n\t\t});\n\t});\n\tdescribe('Context', ()=> {\n\t\t/**\n\t\t * @test {Context.providers}\n\t\t */\n\t\tdescribe('.providers', ()=> {\n\t\t\tit('should be an object', ()=> {\n\t\t\t\texpect(subject.providers).to.be.an.object();\n\t\t\t});\n\t\t\tit('should register a `singleton` provider', ()=> {\n\t\t\t\texpect(subject.providers.has('singleton')).to.be.true();\n\t\t\t});\n\t\t\tit('should register a `producer` provider', ()=> {\n\t\t\t\texpect(subject.providers.has('producer')).to.be.true();\n\t\t\t});\n\t\t\tit('should register a `value` provider', ()=> {\n\t\t\t\texpect(subject.providers.has('value')).to.be.true();\n\t\t\t});\n\t\t});\n\t\t/**\n\t\t * @test {Context.create}\n\t\t */\n\t\tdescribe('.create()', () => {\n\t\t\tit('should create a Context instance', ()=> {\n\t\t\t\tconst instance = subject.create();\n\t\t\t\texpect(isContext(instance)).to.be.true();\n\t\t\t});\n\t\t});\n\t\t/**\n\t\t * @test {Context.getDependencies}\n\t\t */\n\t\tdescribe('.getDependencies()', ()=> {\n\t\t\tit('should return all the dependencies of a function', ()=> {\n\t\t\t\tconst f = (foo, baz, qux)=> {\n\t\t\t\t};\n\t\t\t\texpect(subject.getDependencies(f)).to.eql(['foo', 'baz', 'qux']);\n\t\t\t});\n\t\t\tit('should throw for anything else but a function', ()=> {\n\t\t\t\tFALSY_VALUES\n\t\t\t\t\t.concat({}, [], 0, undefined)\n\t\t\t\t\t.forEach(falsy=> {\n\t\t\t\t\t\texpect(()=> {\n\t\t\t\t\t\t\tsubject.getDependencies(falsy);\n\t\t\t\t\t\t}).to.throw(/function/i);\n\t\t\t\t\t});\n\t\t\t});\n\t\t});\n\t\t/**\n\t\t * @test {Context.register}\n\t\t */\n\t\tdescribe('.register()', ()=> {\n\t\t\tit('should register a provider object', ()=> {\n\t\t\t\tsubject.register({\n\t\t\t\t\tname     : 'answerToLifeTheUniverseAndEverything',\n\t\t\t\t\tconfigure: () => {\n\t\t\t\t\t\treturn function return42() {\n\t\t\t\t\t\t\treturn 42\n\t\t\t\t\t\t};\n\t\t\t\t\t}\n\t\t\t\t});\n\t\t\t\tconst instance = subject.create();\n\t\t\t\tinstance.wire(NOOP).as.answerToLifeTheUniverseAndEverything('constant');\n\t\t\t\tconst value = instance.retrieve('constant');\n\t\t\t\texpect(value).to.equal(42);\n\t\t\t});\n\t\t\tit('should register a named function', ()=> {\n\t\t\t\tsubject.register(function constant() {\n\t\t\t\t\treturn function return42() {\n\t\t\t\t\t\treturn 42\n\t\t\t\t\t};\n\t\t\t\t});\n\t\t\t\tconst instance = subject.create();\n\t\t\t\tinstance.wire(NOOP).as.constant('constant');\n\t\t\t\tconst value = instance.retrieve('constant');\n\t\t\t\texpect(value).to.equal(42);\n\t\t\t});\n\t\t\tit('should throw an error when trying to re-register', ()=> {\n\t\t\t\texpect(()=> {\n\t\t\t\t\tsubject.register({\n\t\t\t\t\t\tname  : 'singleton',\n\t\t\t\t\t\tcreate: ()=> {\n\t\t\t\t\t\t}\n\t\t\t\t\t});\n\t\t\t\t}).to.throw(/already registered/i);\n\t\t\t});\n\t\t});\n\t\t/**\n\t\t * @test {Context#wire}\n\t\t */\n\t\tdescribe('#wire()', ()=> {\n\t\t\tlet instance;\n\t\t\tbeforeEach(()=> {\n\t\t\t\tinstance = new subject();\n\t\t\t});\n\t\t\tit('should throw an error when `subject` is `undefined`', ()=> {\n\t\t\t\texpect(()=> {\n\t\t\t\t\tinstance.wire().as.value();\n\t\t\t\t}).to.throw(/undefined/i);\n\t\t\t});\n\t\t\tit('should allow registration of a function as a singleton', ()=> {\n\t\t\t\tinstance.wire(NOOP).as.singleton('singleton');\n\t\t\t\texpect(instance.has('singleton')).to.be.true();\n\t\t\t});\n\t\t\tit('should allow registration of a function as a producer', ()=> {\n\t\t\t\tinstance.wire(NOOP).as.producer('producer');\n\t\t\t\texpect(instance.has('producer')).to.be.true();\n\t\t\t});\n\t\t\tit('should allow registration of a value as a value', ()=> {\n\t\t\t\tinstance.wire({}).as.value('value');\n\t\t\t\texpect(instance.has('value')).to.be.true();\n\t\t\t});\n\t\t\tit('should throw an error when `key` is already used', ()=> {\n\t\t\t\tinstance.wire(NOOP).as.singleton('singleton');\n\t\t\t\texpect(()=> {\n\t\t\t\t\tinstance.wire(NOOP).as.singleton('singleton');\n\t\t\t\t}).to.throw(/already exists/i);\n\t\t\t});\n\t\t\tit('should allow wiring falsy values', ()=> {\n\t\t\t\tFALSY_VALUES.forEach(falsy=> {\n\t\t\t\t\texpect(()=> {\n\t\t\t\t\t\tinstance.wire(falsy);\n\t\t\t\t\t}, `allow wiring \"${falsy}\" as a value`).to.not.throw();\n\t\t\t\t});\n\t\t\t});\n\t\t\tit('should throw an error when using anything else but a string as a key', ()=> {\n\t\t\t\tFALSY_VALUES\n\t\t\t\t\t.concat({}, [], NOOP, undefined)\n\t\t\t\t\t.forEach((invalid)=> {\n\t\t\t\t\t\texpect(()=> {\n\t\t\t\t\t\t\tinstance.wire(NOOP).as.value(invalid);\n\t\t\t\t\t\t}).to.throw(/cannot use/i);\n\t\t\t\t\t});\n\t\t\t});\n\t\t});\n\t\t/**\n\t\t * @test {Context#require}\n\t\t */\n\t\tdescribe('#require()', ()=> {\n\t\t\tlet instance;\n\t\t\tit('should throw if no `module` was provided', ()=> {\n\t\t\t\tinstance = new subject();\n\t\t\t\texpect(()=> instance.require('./fixtures/foo')).to.throw(/module/i);\n\t\t\t});\n\t\t\tit('should require the file and allow wiring it up as a singleton producer', ()=> {\n\t\t\t\tinstance = new subject(module);\n\t\t\t\tinstance.require('./fixtures/foo').as.singleton('foo');\n\t\t\t\tconst value = instance.retrieve('foo');\n\t\t\t\texpect(instance.retrieve('foo')).to.equal(value);\n\t\t\t});\n\t\t\tit('should require the file and allow wiring it up as a producer', ()=> {\n\t\t\t\tinstance = new subject(module);\n\t\t\t\tinstance.require('./fixtures/foo').as.producer('foo');\n\t\t\t\tconst value = instance.retrieve('foo');\n\t\t\t\texpect(instance.retrieve('foo')).to.not.equal(value);\n\t\t\t});\n\t\t});\n\t\t/**\n\t\t * @test {Context#resolve}\n\t\t */\n\t\tdescribe('#resolve()', ()=> {\n\t\t\tlet instance;\n\t\t\tbeforeEach(()=> {\n\t\t\t\tinstance = new subject();\n\t\t\t});\n\t\t\tit('should resolve a function\\'s dependencies', ()=> {\n\t\t\t\tinstance.wire('foo').as.value('foo');\n\t\t\t\tinstance.wire('baz').as.value('baz');\n\t\t\t\tinstance.wire('qux').as.value('qux');\n\t\t\t\tconst f = (foo, baz, qux)=> {\n\t\t\t\t\treturn [foo, baz, qux]\n\t\t\t\t};\n\t\t\t\tconst actual = instance.resolve(f);\n\t\t\t\texpect(actual).to.eql(['foo', 'baz', 'qux']);\n\t\t\t});\n\t\t\tit('should throw an error when a dependency is not found', ()=> {\n\t\t\t\texpect(()=> {\n\t\t\t\t\tinstance.resolve(foo=>foo);\n\t\t\t\t}).to.throw(/not found/i);\n\t\t\t});\n\t\t\tit('should allow resolving a dependency with a falsy value', ()=> {\n\t\t\t\tFALSY_VALUES.forEach((falsy, key)=> {\n\t\t\t\t\texpect(()=> {\n\t\t\t\t\t\tinstance\n\t\t\t\t\t\t\t.wire(falsy).as.value('foo')\n\t\t\t\t\t\t\t.resolve(foo=>foo)\n\t\t\t\t\t}, `allow resolving a dependency with \"${falsy}\" as a value`).to.not.throw();\n\t\t\t\t\tinstance.release('foo');\n\t\t\t\t});\n\t\t\t});\n\t\t\tit('should throw an error when trying to resolve anything else but a function', ()=> {\n\t\t\t\tFALSY_VALUES\n\t\t\t\t\t.concat({}, [], undefined)\n\t\t\t\t\t.forEach((invalid)=> {\n\t\t\t\t\t\texpect(()=> {\n\t\t\t\t\t\t\tinstance.resolve(invalid);\n\t\t\t\t\t\t}).to.throw(/function/i);\n\t\t\t\t\t});\n\t\t\t});\n\t\t\tit('should simply call a function without dependencies', ()=> {\n\t\t\t\tlet called = false;\n\t\t\t\tinstance.resolve(()=> {\n\t\t\t\t\tcalled = true;\n\t\t\t\t});\n\t\t\t\texpect(called).to.be.true();\n\t\t\t});\n\t\t});\n\t\t/**\n\t\t * @test {Context#retrieve}\n\t\t */\n\t\tdescribe('#retrieve()', ()=> {\n\t\t\tlet instance;\n\t\t\tbeforeEach(()=> {\n\t\t\t\tinstance = new subject();\n\t\t\t});\n\t\t\tit('should throw an error when `key` is falsy');\n\t\t\tit('should throw an error when the key is not found', ()=> {\n\t\t\t\texpect(()=> {\n\t\t\t\t\tinstance.retrieve('not found');\n\t\t\t\t}).to.throw(/not found/i);\n\t\t\t});\n\t\t\tit('should return the same instance for singletons', ()=> {\n\t\t\t\tinstance.wire(() => ({})).as.singleton('singleton');\n\t\t\t\tvar actual1 = instance.retrieve('singleton');\n\t\t\t\tvar actual2 = instance.retrieve('singleton');\n\t\t\t\texpect(actual1).to.not.be.undefined();\n\t\t\t\texpect(actual1).to.equal(actual2);\n\t\t\t});\n\t\t\tit('should separate singleton instances for different keys', ()=> {\n\t\t\t\tconst factory = () => ({});\n\t\t\t\tinstance.wire(factory).as.singleton('s1');\n\t\t\t\tinstance.wire(factory).as.singleton('s2');\n\t\t\t\tvar actual1 = instance.retrieve('s1');\n\t\t\t\tvar actual2 = instance.retrieve('s2');\n\t\t\t\texpect(actual1).to.not.equal(actual2);\n\t\t\t});\n\t\t\tit('should return a new instance for producers', ()=> {\n\t\t\t\tinstance.wire(() => ({})).as.producer('producer');\n\t\t\t\tvar actual1 = instance.retrieve('producer');\n\t\t\t\tvar actual2 = instance.retrieve('producer');\n\t\t\t\texpect(actual1).to.not.equal(actual2);\n\t\t\t});\n\t\t\tit('should retrieve the upstream value when none is wired downstream', ()=> {\n\t\t\t\tconst child = instance.spawn().spawn().spawn();\n\t\t\t\tinstance.wire(42).as.value('the answer to life, the universe and everything ');\n\t\t\t\texpect(child.retrieve('the answer to life, the universe and everything ')).to.equal(42);\n\t\t\t});\n\t\t\tit('should retrieve the downstream value when overriding the upstream one', ()=> {\n\t\t\t\tconst child = instance.spawn().spawn().spawn();\n\t\t\t\tinstance.wire(0).as.value('the answer to life, the universe and everything ');\n\t\t\t\tchild.wire(42).as.value('the answer to life, the universe and everything ');\n\t\t\t\texpect(child.retrieve('the answer to life, the universe and everything ')).to.equal(42);\n\t\t\t});\n\t\t\tit('should not retrieve the downstream value when the upstream one is requested', ()=> {\n\t\t\t\tconst child = instance.spawn().spawn().spawn();\n\t\t\t\tinstance.wire(0).as.value('the answer to life, the universe and everything ');\n\t\t\t\tchild.wire(42).as.value('the answer to life, the universe and everything ');\n\t\t\t\texpect(instance.retrieve('the answer to life, the universe and everything ')).to.equal(0);\n\t\t\t});\n\t\t\tit('should not throw when the value is falsy', ()=> {\n\t\t\t\tFALSY_VALUES.forEach((falsy, key)=> {\n\t\t\t\t\tconst keyStr = key.toString();\n\t\t\t\t\tinstance.wire(falsy).as.value(keyStr);\n\t\t\t\t\texpect(()=> {\n\t\t\t\t\t\tinstance.retrieve(keyStr);\n\t\t\t\t\t}, `allow retrieving a \"${falsy}\" value`).to.not.throw();\n\t\t\t\t});\n\t\t\t});\n\t\t});\n\t\t/**\n\t\t * @test {Context#using}\n\t\t */\n\t\tdescribe('#using()', ()=> {\n\t\t\tlet instance;\n\t\t\tbeforeEach(()=> {\n\t\t\t\tinstance = new subject();\n\t\t\t});\n\t\t\tit('should allow overriding dependencies when resolving', ()=> {\n\t\t\t\tinstance.wire(NOOP).as.singleton('foo');\n\t\t\t\tinstance.wire('baz').as.value('baz');\n\t\t\t\tconst [foo, baz] = instance\n\t\t\t\t\t.using({foo: 42})\n\t\t\t\t\t.resolve((foo, baz) => [foo, baz]);\n\t\t\t\texpect(foo).to.equal(42);\n\t\t\t\texpect(baz).to.equal('baz');\n\t\t\t});\n\t\t\tit('should throw an error when a dependency is not found', ()=> {\n\t\t\t\texpect(()=> {\n\t\t\t\t\tinstance\n\t\t\t\t\t\t.using({foo: 42})\n\t\t\t\t\t\t.resolve((foo, baz)=>[foo, baz]);\n\t\t\t\t}).to.throw(/not found/i);\n\t\t\t});\n\t\t\tit('should not throw an error when overridden with a falsy value', ()=> {\n\t\t\t\tFALSY_VALUES.forEach((falsy)=> {\n\t\t\t\t\texpect(()=> {\n\t\t\t\t\t\tinstance\n\t\t\t\t\t\t\t.using({foo: falsy})\n\t\t\t\t\t\t\t.resolve(foo=>foo);\n\t\t\t\t\t}, `allow overriding with \"${falsy}\" as a value`).to.not.throw();\n\t\t\t\t});\n\t\t\t});\n\t\t\tit('should throw an error when trying to resolve anything else but a function', ()=> {\n\t\t\t\tFALSY_VALUES\n\t\t\t\t\t.concat({}, [], undefined)\n\t\t\t\t\t.forEach((invalid)=> {\n\t\t\t\t\t\texpect(()=> {\n\t\t\t\t\t\t\tinstance.using({}).resolve(invalid);\n\t\t\t\t\t\t}).to.throw(/function/i);\n\t\t\t\t\t});\n\t\t\t});\n\t\t\tit('should throw an error when trying to use anything else but a \"real\" object, Context or function', ()=> {\n\t\t\t\tFALSY_VALUES\n\t\t\t\t\t.concat([], undefined)\n\t\t\t\t\t.forEach((invalid)=> {\n\t\t\t\t\t\texpect(()=> {\n\t\t\t\t\t\t\tinstance.using(invalid);\n\t\t\t\t\t\t}, `disallow using \"${invalid}\" for overriding dependencies`).to.throw(/object/i);\n\t\t\t\t\t});\n\t\t\t});\n\t\t\tit('should call a function to use its result for overriding dependencies', ()=> {\n\t\t\t\tconst actual = instance.using(()=>({foo: 'foo'})).resolve((foo)=>foo);\n\t\t\t\texpect(actual).to.equal('foo');\n\t\t\t});\n\t\t\tit('should resolve a function to use its result for overriding dependencies', ()=> {\n\t\t\t\tinstance.wire('baz').as.value('baz');\n\t\t\t\tconst actual = instance.using((baz)=>({foo: baz})).resolve((foo)=>foo);\n\t\t\t\texpect(actual).to.equal('baz');\n\t\t\t});\n\t\t\tit('should allow using a different context for overriding dependencies', ()=> {\n\t\t\t\tconst context = new subject();\n\t\t\t\tcontext.wire('foo').as.value('foo');\n\t\t\t\tconst actual = instance.using(context).resolve((foo)=>foo);\n\t\t\t\texpect(actual).to.equal('foo');\n\t\t\t});\n\t\t\tit('should fallback to the current context when using a different context for overriding dependencies', ()=> {\n\t\t\t\tconst context = new subject();\n\t\t\t\tcontext.wire('foo').as.value('foo');\n\t\t\t\tinstance.wire('baz').as.value('baz');\n\t\t\t\tconst [foo, baz] = instance.using(context).resolve((foo, baz)=>[foo, baz]);\n\t\t\t\texpect(foo).to.equal('foo');\n\t\t\t\texpect(baz).to.equal('baz');\n\t\t\t});\n\t\t});\n\t\t/**\n\t\t * @test {Context#spawn}\n\t\t */\n\t\tdescribe('#spawn()', ()=> {\n\t\t\tit('should create a child context', ()=> {\n\t\t\t\tconst instance = new subject();\n\t\t\t\tconst child = instance.spawn();\n\t\t\t\texpect(isContext(child)).to.be.true();\n\t\t\t\texpect(child.parent).to.equal(instance);\n\t\t\t});\n\t\t});\n\t\t/**\n\t\t * @test {Context#release}\n\t\t */\n\t\tdescribe('#release()', ()=> {\n\t\t\tit('should unregister a dependency', ()=> {\n\t\t\t\tconst instance = new subject();\n\t\t\t\tinstance.wire(NOOP).as.singleton('singleton');\n\t\t\t\tinstance.release('singleton');\n\t\t\t\texpect(instance.has('singleton')).to.be.false();\n\t\t\t});\n\t\t\tit('should not throw when unregistering an unregistered dependency', ()=> {\n\t\t\t\tconst instance = new subject();\n\t\t\t\texpect(()=> {\n\t\t\t\t\tinstance.release('singleton');\n\t\t\t\t}).to.not.throw();\n\t\t\t});\n\t\t});\n\t});\n});\n"
+  },
+  {
+    "__docId__": 80,
+    "kind": "testDescribe",
+    "static": true,
+    "variation": null,
+    "name": "describe0",
+    "testId": 0,
+    "memberof": "test/mortar.spec.js",
+    "testDepth": 0,
+    "longname": "test/mortar.spec.js~describe0",
+    "access": null,
+    "description": "{mortar}",
+    "lineNumber": 10
+  },
+  {
+    "__docId__": 81,
+    "kind": "testDescribe",
+    "static": true,
+    "variation": null,
+    "name": "describe1",
+    "testId": 1,
+    "memberof": "test/mortar.spec.js~describe0",
+    "testDepth": 1,
+    "longname": "test/mortar.spec.js~describe0.describe1",
+    "access": null,
+    "description": "module",
+    "lineNumber": 11
+  },
+  {
+    "__docId__": 82,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it2",
+    "testId": 2,
+    "memberof": "test/mortar.spec.js~describe0.describe1",
+    "testDepth": 2,
+    "longname": "test/mortar.spec.js~describe0.describe1.it2",
+    "access": null,
+    "description": "should be a class",
+    "lineNumber": 12
+  },
+  {
+    "__docId__": 83,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it3",
+    "testId": 3,
+    "memberof": "test/mortar.spec.js~describe0.describe1",
+    "testDepth": 2,
+    "longname": "test/mortar.spec.js~describe0.describe1.it3",
+    "access": null,
+    "description": "should be instantiatable",
+    "lineNumber": 15
+  },
+  {
+    "__docId__": 84,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it4",
+    "testId": 4,
+    "memberof": "test/mortar.spec.js~describe0.describe1",
+    "testDepth": 2,
+    "longname": "test/mortar.spec.js~describe0.describe1.it4",
+    "access": null,
+    "description": "should throw an error when called directly",
+    "lineNumber": 19
+  },
+  {
+    "__docId__": 85,
+    "kind": "testDescribe",
+    "static": true,
+    "variation": null,
+    "name": "describe5",
+    "testId": 5,
+    "memberof": "test/mortar.spec.js~describe0",
+    "testDepth": 1,
+    "longname": "test/mortar.spec.js~describe0.describe5",
+    "access": null,
+    "description": "Context",
+    "lineNumber": 25
+  },
+  {
+    "__docId__": 86,
+    "kind": "testDescribe",
+    "static": true,
+    "variation": null,
+    "name": "describe6",
+    "testId": 6,
+    "memberof": "test/mortar.spec.js~describe0.describe5",
+    "testDepth": 2,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe6",
+    "access": null,
+    "description": ".providers",
+    "lineNumber": 29,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{Context.providers}"
+      }
+    ],
+    "testTargets": [
+      "Context.providers"
+    ]
+  },
+  {
+    "__docId__": 87,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it7",
+    "testId": 7,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe6",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe6.it7",
+    "access": null,
+    "description": "should be an object",
+    "lineNumber": 30
+  },
+  {
+    "__docId__": 88,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it8",
+    "testId": 8,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe6",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe6.it8",
+    "access": null,
+    "description": "should register a `singleton` provider",
+    "lineNumber": 33
+  },
+  {
+    "__docId__": 89,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it9",
+    "testId": 9,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe6",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe6.it9",
+    "access": null,
+    "description": "should register a `producer` provider",
+    "lineNumber": 36
+  },
+  {
+    "__docId__": 90,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it10",
+    "testId": 10,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe6",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe6.it10",
+    "access": null,
+    "description": "should register a `value` provider",
+    "lineNumber": 39
+  },
+  {
+    "__docId__": 91,
+    "kind": "testDescribe",
+    "static": true,
+    "variation": null,
+    "name": "describe11",
+    "testId": 11,
+    "memberof": "test/mortar.spec.js~describe0.describe5",
+    "testDepth": 2,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe11",
+    "access": null,
+    "description": ".create()",
+    "lineNumber": 46,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{Context.create}"
+      }
+    ],
+    "testTargets": [
+      "Context.create"
+    ]
+  },
+  {
+    "__docId__": 92,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it12",
+    "testId": 12,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe11",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe11.it12",
+    "access": null,
+    "description": "should create a Context instance",
+    "lineNumber": 47
+  },
+  {
+    "__docId__": 93,
+    "kind": "testDescribe",
+    "static": true,
+    "variation": null,
+    "name": "describe13",
+    "testId": 13,
+    "memberof": "test/mortar.spec.js~describe0.describe5",
+    "testDepth": 2,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe13",
+    "access": null,
+    "description": ".getDependencies()",
+    "lineNumber": 55,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{Context.getDependencies}"
+      }
+    ],
+    "testTargets": [
+      "Context.getDependencies"
+    ]
+  },
+  {
+    "__docId__": 94,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it14",
+    "testId": 14,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe13",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe13.it14",
+    "access": null,
+    "description": "should return all the dependencies of a function",
+    "lineNumber": 56
+  },
+  {
+    "__docId__": 95,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it15",
+    "testId": 15,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe13",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe13.it15",
+    "access": null,
+    "description": "should throw for anything else but a function",
+    "lineNumber": 61
+  },
+  {
+    "__docId__": 96,
+    "kind": "testDescribe",
+    "static": true,
+    "variation": null,
+    "name": "describe16",
+    "testId": 16,
+    "memberof": "test/mortar.spec.js~describe0.describe5",
+    "testDepth": 2,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe16",
+    "access": null,
+    "description": ".register()",
+    "lineNumber": 74,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{Context.register}"
+      }
+    ],
+    "testTargets": [
+      "Context.register"
+    ]
+  },
+  {
+    "__docId__": 97,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it17",
+    "testId": 17,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe16",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe16.it17",
+    "access": null,
+    "description": "should register a provider object",
+    "lineNumber": 75
+  },
+  {
+    "__docId__": 98,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it18",
+    "testId": 18,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe16",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe16.it18",
+    "access": null,
+    "description": "should register a named function",
+    "lineNumber": 89
+  },
+  {
+    "__docId__": 99,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it19",
+    "testId": 19,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe16",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe16.it19",
+    "access": null,
+    "description": "should throw an error when trying to re-register",
+    "lineNumber": 100
+  },
+  {
+    "__docId__": 100,
+    "kind": "testDescribe",
+    "static": true,
+    "variation": null,
+    "name": "describe20",
+    "testId": 20,
+    "memberof": "test/mortar.spec.js~describe0.describe5",
+    "testDepth": 2,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe20",
+    "access": null,
+    "description": "#wire()",
+    "lineNumber": 113,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{Context#wire}"
+      }
+    ],
+    "testTargets": [
+      "Context#wire"
+    ]
+  },
+  {
+    "__docId__": 101,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it21",
+    "testId": 21,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe20",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe20.it21",
+    "access": null,
+    "description": "should throw an error when `subject` is `undefined`",
+    "lineNumber": 118
+  },
+  {
+    "__docId__": 102,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it22",
+    "testId": 22,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe20",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe20.it22",
+    "access": null,
+    "description": "should allow registration of a function as a singleton",
+    "lineNumber": 123
+  },
+  {
+    "__docId__": 103,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it23",
+    "testId": 23,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe20",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe20.it23",
+    "access": null,
+    "description": "should allow registration of a function as a producer",
+    "lineNumber": 127
+  },
+  {
+    "__docId__": 104,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it24",
+    "testId": 24,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe20",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe20.it24",
+    "access": null,
+    "description": "should allow registration of a value as a value",
+    "lineNumber": 131
+  },
+  {
+    "__docId__": 105,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it25",
+    "testId": 25,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe20",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe20.it25",
+    "access": null,
+    "description": "should throw an error when `key` is already used",
+    "lineNumber": 135
+  },
+  {
+    "__docId__": 106,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it26",
+    "testId": 26,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe20",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe20.it26",
+    "access": null,
+    "description": "should allow wiring falsy values",
+    "lineNumber": 141
+  },
+  {
+    "__docId__": 107,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it27",
+    "testId": 27,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe20",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe20.it27",
+    "access": null,
+    "description": "should throw an error when using anything else but a string as a key",
+    "lineNumber": 148
+  },
+  {
+    "__docId__": 108,
+    "kind": "testDescribe",
+    "static": true,
+    "variation": null,
+    "name": "describe28",
+    "testId": 28,
+    "memberof": "test/mortar.spec.js~describe0.describe5",
+    "testDepth": 2,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe28",
+    "access": null,
+    "description": "#require()",
+    "lineNumber": 161,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{Context#require}"
+      }
+    ],
+    "testTargets": [
+      "Context#require"
+    ]
+  },
+  {
+    "__docId__": 109,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it29",
+    "testId": 29,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe28",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe28.it29",
+    "access": null,
+    "description": "should throw if no `module` was provided",
+    "lineNumber": 163
+  },
+  {
+    "__docId__": 110,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it30",
+    "testId": 30,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe28",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe28.it30",
+    "access": null,
+    "description": "should require the file and allow wiring it up as a singleton producer",
+    "lineNumber": 167
+  },
+  {
+    "__docId__": 111,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it31",
+    "testId": 31,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe28",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe28.it31",
+    "access": null,
+    "description": "should require the file and allow wiring it up as a producer",
+    "lineNumber": 173
+  },
+  {
+    "__docId__": 112,
+    "kind": "testDescribe",
+    "static": true,
+    "variation": null,
+    "name": "describe32",
+    "testId": 32,
+    "memberof": "test/mortar.spec.js~describe0.describe5",
+    "testDepth": 2,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe32",
+    "access": null,
+    "description": "#resolve()",
+    "lineNumber": 183,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{Context#resolve}"
+      }
+    ],
+    "testTargets": [
+      "Context#resolve"
+    ]
+  },
+  {
+    "__docId__": 113,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it33",
+    "testId": 33,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe32",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe32.it33",
+    "access": null,
+    "description": "should resolve a function's dependencies",
+    "lineNumber": 188
+  },
+  {
+    "__docId__": 114,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it34",
+    "testId": 34,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe32",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe32.it34",
+    "access": null,
+    "description": "should throw an error when a dependency is not found",
+    "lineNumber": 198
+  },
+  {
+    "__docId__": 115,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it35",
+    "testId": 35,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe32",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe32.it35",
+    "access": null,
+    "description": "should allow resolving a dependency with a falsy value",
+    "lineNumber": 203
+  },
+  {
+    "__docId__": 116,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it36",
+    "testId": 36,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe32",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe32.it36",
+    "access": null,
+    "description": "should throw an error when trying to resolve anything else but a function",
+    "lineNumber": 213
+  },
+  {
+    "__docId__": 117,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it37",
+    "testId": 37,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe32",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe32.it37",
+    "access": null,
+    "description": "should simply call a function without dependencies",
+    "lineNumber": 222
+  },
+  {
+    "__docId__": 118,
+    "kind": "testDescribe",
+    "static": true,
+    "variation": null,
+    "name": "describe38",
+    "testId": 38,
+    "memberof": "test/mortar.spec.js~describe0.describe5",
+    "testDepth": 2,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe38",
+    "access": null,
+    "description": "#retrieve()",
+    "lineNumber": 233,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{Context#retrieve}"
+      }
+    ],
+    "testTargets": [
+      "Context#retrieve"
+    ]
+  },
+  {
+    "__docId__": 119,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it39",
+    "testId": 39,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe38",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe38.it39",
+    "access": null,
+    "description": "should throw an error when `key` is falsy",
+    "lineNumber": 238
+  },
+  {
+    "__docId__": 120,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it40",
+    "testId": 40,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe38",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe38.it40",
+    "access": null,
+    "description": "should throw an error when the key is not found",
+    "lineNumber": 239
+  },
+  {
+    "__docId__": 121,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it41",
+    "testId": 41,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe38",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe38.it41",
+    "access": null,
+    "description": "should return the same instance for singletons",
+    "lineNumber": 244
+  },
+  {
+    "__docId__": 122,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it42",
+    "testId": 42,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe38",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe38.it42",
+    "access": null,
+    "description": "should separate singleton instances for different keys",
+    "lineNumber": 251
+  },
+  {
+    "__docId__": 123,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it43",
+    "testId": 43,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe38",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe38.it43",
+    "access": null,
+    "description": "should return a new instance for producers",
+    "lineNumber": 259
+  },
+  {
+    "__docId__": 124,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it44",
+    "testId": 44,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe38",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe38.it44",
+    "access": null,
+    "description": "should retrieve the upstream value when none is wired downstream",
+    "lineNumber": 265
+  },
+  {
+    "__docId__": 125,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it45",
+    "testId": 45,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe38",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe38.it45",
+    "access": null,
+    "description": "should retrieve the downstream value when overriding the upstream one",
+    "lineNumber": 270
+  },
+  {
+    "__docId__": 126,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it46",
+    "testId": 46,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe38",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe38.it46",
+    "access": null,
+    "description": "should not retrieve the downstream value when the upstream one is requested",
+    "lineNumber": 276
+  },
+  {
+    "__docId__": 127,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it47",
+    "testId": 47,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe38",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe38.it47",
+    "access": null,
+    "description": "should not throw when the value is falsy",
+    "lineNumber": 282
+  },
+  {
+    "__docId__": 128,
+    "kind": "testDescribe",
+    "static": true,
+    "variation": null,
+    "name": "describe48",
+    "testId": 48,
+    "memberof": "test/mortar.spec.js~describe0.describe5",
+    "testDepth": 2,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe48",
+    "access": null,
+    "description": "#using()",
+    "lineNumber": 295,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{Context#using}"
+      }
+    ],
+    "testTargets": [
+      "Context#using"
+    ]
+  },
+  {
+    "__docId__": 129,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it49",
+    "testId": 49,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe48",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe48.it49",
+    "access": null,
+    "description": "should allow overriding dependencies when resolving",
+    "lineNumber": 300
+  },
+  {
+    "__docId__": 130,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it50",
+    "testId": 50,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe48",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe48.it50",
+    "access": null,
+    "description": "should throw an error when a dependency is not found",
+    "lineNumber": 309
+  },
+  {
+    "__docId__": 131,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it51",
+    "testId": 51,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe48",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe48.it51",
+    "access": null,
+    "description": "should not throw an error when overridden with a falsy value",
+    "lineNumber": 316
+  },
+  {
+    "__docId__": 132,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it52",
+    "testId": 52,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe48",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe48.it52",
+    "access": null,
+    "description": "should throw an error when trying to resolve anything else but a function",
+    "lineNumber": 325
+  },
+  {
+    "__docId__": 133,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it53",
+    "testId": 53,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe48",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe48.it53",
+    "access": null,
+    "description": "should throw an error when trying to use anything else but a \"real\" object, Context or function",
+    "lineNumber": 334
+  },
+  {
+    "__docId__": 134,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it54",
+    "testId": 54,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe48",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe48.it54",
+    "access": null,
+    "description": "should call a function to use its result for overriding dependencies",
+    "lineNumber": 343
+  },
+  {
+    "__docId__": 135,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it55",
+    "testId": 55,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe48",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe48.it55",
+    "access": null,
+    "description": "should resolve a function to use its result for overriding dependencies",
+    "lineNumber": 347
+  },
+  {
+    "__docId__": 136,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it56",
+    "testId": 56,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe48",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe48.it56",
+    "access": null,
+    "description": "should allow using a different context for overriding dependencies",
+    "lineNumber": 352
+  },
+  {
+    "__docId__": 137,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it57",
+    "testId": 57,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe48",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe48.it57",
+    "access": null,
+    "description": "should fallback to the current context when using a different context for overriding dependencies",
+    "lineNumber": 358
+  },
+  {
+    "__docId__": 138,
+    "kind": "testDescribe",
+    "static": true,
+    "variation": null,
+    "name": "describe58",
+    "testId": 58,
+    "memberof": "test/mortar.spec.js~describe0.describe5",
+    "testDepth": 2,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe58",
+    "access": null,
+    "description": "#spawn()",
+    "lineNumber": 370,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{Context#spawn}"
+      }
+    ],
+    "testTargets": [
+      "Context#spawn"
+    ]
+  },
+  {
+    "__docId__": 139,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it59",
+    "testId": 59,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe58",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe58.it59",
+    "access": null,
+    "description": "should create a child context",
+    "lineNumber": 371
+  },
+  {
+    "__docId__": 140,
+    "kind": "testDescribe",
+    "static": true,
+    "variation": null,
+    "name": "describe60",
+    "testId": 60,
+    "memberof": "test/mortar.spec.js~describe0.describe5",
+    "testDepth": 2,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe60",
+    "access": null,
+    "description": "#release()",
+    "lineNumber": 381,
+    "unknown": [
+      {
+        "tagName": "@test",
+        "tagValue": "{Context#release}"
+      }
+    ],
+    "testTargets": [
+      "Context#release"
+    ]
+  },
+  {
+    "__docId__": 141,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it61",
+    "testId": 61,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe60",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe60.it61",
+    "access": null,
+    "description": "should unregister a dependency",
+    "lineNumber": 382
+  },
+  {
+    "__docId__": 142,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it62",
+    "testId": 62,
+    "memberof": "test/mortar.spec.js~describe0.describe5.describe60",
+    "testDepth": 3,
+    "longname": "test/mortar.spec.js~describe0.describe5.describe60.it62",
+    "access": null,
+    "description": "should not throw when unregistering an unregistered dependency",
+    "lineNumber": 388
+  }
+]
