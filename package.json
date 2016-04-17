@@ -8,6 +8,7 @@
     "lint": "eslint es6.js test",
     "travis": "npm run lint && npm test",
     "test-cov": "babel-node ./node_modules/istanbul/lib/cli.js cover _mocha -- ./test",
+    "coveralls": "npm run test-cov;cat ./coverage/lcov.info | coveralls",
     "build": "babel src -o es5.js",
     "docs": "esdoc -c esdoc.json -R README.md",
     "gh-pages": "grunt gh-pages"
