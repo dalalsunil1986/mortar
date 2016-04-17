@@ -57,8 +57,8 @@ export default class Context {
 		this._cache.delete(key);
 	}
 
-	resolve(subject) {
-		return this.using(this.parent || {}).resolve(subject);
+	resolve(subject, constructable = false) {
+		return this.using(this.parent || {}).resolve(subject, constructable);
 	}
 
 	using(contextOrMap) {
@@ -70,7 +70,7 @@ export default class Context {
 			contextOrMap = this.resolve(contextOrMap);
 		}
 		return {
-			resolve: function(subject) {
+			resolve: function(subject, constructable = false) {
 				if (!_.isFunction(subject)) {
 					throw new Error(`{ERROR_PREFIX} Cannot resolve anything else but a function`);
 				}
@@ -89,7 +89,7 @@ export default class Context {
 						return value;
 					});
 				}
-				return (isClass(subject)) ? new subject(...resolved) : subject(...resolved);
+				return (constructable || isClass(subject)) ? new subject(...resolved) : subject(...resolved);
 			}
 		};
 	}
